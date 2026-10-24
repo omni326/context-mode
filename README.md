@@ -551,6 +551,37 @@ export { default } from "<prefix>/lib/node_modules/context-mode/build/adapters/o
 { "plugins": ["<your-dir>/context-mode-v2"] }
 ```
 
+### Fork-local patches (this machine only — intentionally NOT in source)
+
+Two local edits adapt the *installed package* to this fork; they are reverted
+by every `npm pack && npm i -g` reinstall and must be re-applied afterwards.
+They stay out of the repository on purpose — hard-coded clone URLs and machine
+paths do not belong in shared source:
+
+1. **Upgrade endpoint points at this fork.** The `ctx_upgrade` MCP tool (and
+   the `ctx-upgrade` skill) return a command that clones
+   `https://github.com/mksglu/context-mode.git`, which would silently replace
+   the fork build with upstream. Patch the installed bundle:
+
+   ```sh
+   P=$(npm root -g)/context-mode
+   sed -i '' 's|https://github.com/mksglu/context-mode.git|https://github.com/omni326/context-mode.git|g' "$P/server.bundle.mjs"
+   ```
+
+   (Upstreamable shape, if ever desired: make the upgrade repo a config/env
+   override such as `CONTEXT_MODE_UPGRADE_REPO`, defaulting to upstream.)
+
+2. **Skill fallback path on OpenCode.** The `ctx-doctor` / `ctx-upgrade`
+   skills derive the plugin root by going up two levels from the skill
+   directory — true when skills live inside `node_modules/context-mode/`, but
+   OpenCode loads user-level skills from `~/.config/opencode/skills/`, so the
+   fallback (used only when the MCP call fails) would resolve a wrong root.
+   Patch the two SKILL.md files to name the install directory explicitly:
+
+   ```sh
+   sed -i '' "s|Derive the \*\*plugin root\*\* from this skill's base directory.*|Use plugin root $P,|" "$P/skills/ctx-doctor/SKILL.md" "$P/skills/ctx-upgrade/SKILL.md"
+   ```
+
 Two OpenCode-2 specifics this entry handles that a naive port misses (both
 verified against a running OpenCode 2):
 
