@@ -261,7 +261,7 @@ function getPlatform(): AdapterPlatformType {
  * KiloCode expects: export default { id: string, server: (input) => Promise<Hooks> }
  * OpenCode expects: export const ContextModePlugin = (ctx) => Promise<Hooks>
  */
-async function createContextModePlugin(ctx: PluginContext) {
+export async function createContextModePlugin(ctx: PluginContext) {
   // Resolve build dir from compiled JS location
   const platform = getPlatform();
   const adapter = new OpenCodeAdapter(platform);

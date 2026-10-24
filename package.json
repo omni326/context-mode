@@ -52,6 +52,7 @@
   "exports": {
     ".": "./build/adapters/opencode/plugin.js",
     "./plugin": "./build/adapters/opencode/plugin.js",
+    "./plugin-v2": "./build/adapters/opencode/plugin-v2.js",
     "./openclaw": "./build/adapters/openclaw/plugin.js",
     "./cli": "./cli.bundle.mjs"
   },
@@ -102,6 +103,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.0.1",
+    "@opencode/plugin": "^2.1.4",
     "@mixmark-io/domino": "^2.2.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "better-sqlite3": "^12.6.2",

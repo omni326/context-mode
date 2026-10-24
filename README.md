@@ -503,6 +503,73 @@ Full configs: [`configs/cursor/hooks.json`](configs/cursor/hooks.json) | [`confi
 
 Full configs: [`configs/opencode/opencode.json`](configs/opencode/opencode.json) | [`configs/opencode/AGENTS.md`](configs/opencode/AGENTS.md)
 
+### OpenCode 2 (V2 plugin API)
+
+OpenCode 2 rewrote the plugin API and **does not run V1 plugin implementations**
+([migration guide](https://opencode.ai/v2/docs/build/plugins/migrate-v1)). The
+`plugin: ["context-mode"]` entry above is V1-only. For OpenCode 2 use the V2
+entry, which reuses the same factory and rewires every hook onto the V2 context
+API (`ctx.session.hook`, `ctx.tool.hook`, `ctx.event.subscribe`):
+
+```jsonc
+// opencode.json(c) — project or ~/.config/opencode/
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["context-mode/plugin-v2"]
+}
+```
+
+Git specs (`"plugins": ["github:omni326/context-mode"]`) are **not a working
+install path**: OpenCode's bundled npm re-runs `npm install` to prepare git
+dependencies and fails with `git dep preparation failed`. Install from npm (or
+a local build) instead:
+
+```sh
+npm i -g context-mode   # or: git clone this fork && cd context-mode && npm i -g .
+```
+
+Then point OpenCode at the installed package (a **directory**, not a file path —
+OpenCode skips single-file plugin paths) in `opencode.json(c)`. Use the full
+`file://` URL: bare `context-mode/...` names are fetched into OpenCode's own
+cache, which either hits the git-prepare bug above or resolves to the upstream
+npm package that lacks this fork's fix.
+
+OpenCode loads a plugin directory's default entry (`main`), which in this fork
+is still the V1 build — so for OpenCode 2 add a small wrapper directory with:
+
+```json
+// <your-dir>/context-mode-v2/package.json
+{ "name": "context-mode-v2", "type": "module", "main": "./index.js" }
+```
+
+```js
+// <your-dir>/context-mode-v2/index.js  (re-export the fork's built V2 entry)
+export { default } from "<prefix>/lib/node_modules/context-mode/build/adapters/opencode/plugin-v2.js";
+```
+
+```jsonc
+{ "plugins": ["<your-dir>/context-mode-v2"] }
+```
+
+Two OpenCode-2 specifics this entry handles that a naive port misses (both
+verified against a running OpenCode 2):
+
+1. **System-prompt injection needs a whole-array reassignment.** V2's `context`
+   hook only persists `event.system = [...]`; the in-place `splice`/`push` the V1
+   code uses is silently dropped. `plugin-v2.ts` buffers the change and assigns
+   it back, so the routing block and resume snapshots actually reach the model.
+2. **Native `ctx_*` tools collide with the MCP server.** If context-mode is also
+   configured under `mcp.servers`, registering the plugin's in-process `ctx_*`
+   tools shadows them by name but dispatch fails (`No tool named "ctx_stats"`).
+   So `plugin-v2.ts` leaves native tools OFF by default and relies on the MCP
+   server for the 11 tools. To run fully in-process (no MCP child), remove the
+   `mcp.servers.context-mode` entry and set `CONTEXT_MODE_PLUGIN_TOOLS=1`.
+
+Keep `mcp.servers.context-mode` configured alongside `plugin-v2` — the plugin
+provides hooks (prompt capture, routing-block injection, compaction snapshots,
+tool telemetry) that MCP alone cannot; MCP provides the tools. This is the
+inverse of the V1 upgrade note above: on V2 the two coexist by design.
+
 </details>
 
 <details>
