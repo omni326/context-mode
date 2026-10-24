@@ -519,8 +519,8 @@ API (`ctx.session.hook`, `ctx.tool.hook`, `ctx.event.subscribe`):
 }
 ```
 
-Git specs (`"plugins": ["github:omni326/context-mode"]`) are **not a working
-install path**: OpenCode's bundled npm re-runs `npm install` to prepare git
+Git specs (e.g. `"plugins": ["github:<your-user>/context-mode"]`) are **not a
+working install path**: OpenCode's bundled npm re-runs `npm install` to prepare git
 dependencies and fails with `git dep preparation failed`. Install from npm (or
 a local build) instead:
 
