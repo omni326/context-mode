@@ -100,6 +100,12 @@ describe("getToolName", () => {
     );
   });
 
+  it("returns correct name for opencode-v2 (Code Mode execute catalog)", () => {
+    expect(getToolName("opencode-v2", "ctx_search")).toBe(
+      'tools["context-mode"]["ctx_search"]',
+    );
+  });
+
   it("returns correct name for vscode-copilot", () => {
     expect(getToolName("vscode-copilot", "ctx_batch_execute")).toBe(
       "context-mode_ctx_batch_execute",
@@ -327,6 +333,17 @@ describe("routePreToolUse with platform parameter", () => {
     expect(result).not.toBeNull();
     const cmd = (result!.updatedInput as Record<string, string>).command;
     expect(cmd).toContain("mcp__plugin_context-mode_context-mode__ctx_fetch_and_index");
+  });
+
+  it("curl block message uses Code Mode call form when platform=opencode-v2", () => {
+    const result = routePreToolUse("Bash", { command: "curl https://example.com" }, "/tmp", "opencode-v2");
+    expect(result).not.toBeNull();
+    const cmd = (result!.updatedInput as Record<string, string>).command;
+    expect(cmd).toContain('tools["context-mode"]["ctx_execute"]');
+    expect(cmd).toContain('tools["context-mode"]["ctx_fetch_and_index"]');
+    // top-level context-mode_* names do not exist in OpenCode 2 — they cause
+    // text-form tool calls and dead turns
+    expect(cmd).not.toContain("context-mode_ctx_");
   });
 
   it("inline HTTP block uses cursor bare names when platform=cursor", () => {
