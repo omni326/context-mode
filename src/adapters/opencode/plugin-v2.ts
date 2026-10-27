@@ -71,6 +71,9 @@ export default Plugin.define({
     // no-ops under V2 where there is no client). directory comes from location.
     const h = await createContextModePlugin({
       directory: ctx.location?.directory ?? process.cwd(),
+      // V2 exposes MCP tools through the Code Mode `execute` catalog; guidance
+      // text must name tools["context-mode"]["ctx_*"], not context-mode_ctx_*.
+      namingPlatform: "opencode-v2",
     } as never);
 
     const disposers: Array<() => void> = [];

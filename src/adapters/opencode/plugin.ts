@@ -64,6 +64,8 @@ type PluginClient = {
 type PluginContext = {
   client: PluginClient;
   directory: string;
+  /** Override the tool-name convention used in guidance/routing text (e.g. "opencode-v2"). */
+  namingPlatform?: string;
 };
 
 type NativeToolContext = {
@@ -264,6 +266,12 @@ function getPlatform(): AdapterPlatformType {
 export async function createContextModePlugin(ctx: PluginContext) {
   // Resolve build dir from compiled JS location
   const platform = getPlatform();
+  // OpenCode 2 (Code Mode) exposes MCP tools only through the `execute` tool's
+  // catalog — top-level `context-mode_<tool>` names do not exist, and guidance
+  // text that tells the model to call them produces text-form tool calls and
+  // dead turns. The v2 entry passes namingPlatform to match the real surface;
+  // the adapter (session dirs, config paths) stays on the plain "opencode" id.
+  const namingPlatform = ctx?.namingPlatform ?? platform;
   const adapter = new OpenCodeAdapter(platform);
   const buildDir = dirname(fileURLToPath(import.meta.url));
   // initSecurity() looks for `<dir>/security.js`, which lives at the
@@ -288,7 +296,7 @@ export async function createContextModePlugin(ctx: PluginContext) {
   // (tool naming differs between opencode and kilo) but does NOT depend on
   // sessionID, so we cache it. createToolNamer accepts both "opencode" and
   // "kilo" per hooks/core/tool-naming.mjs:25-26.
-  const toolNamer = toolNamingMod.createToolNamer(platform);
+  const toolNamer = toolNamingMod.createToolNamer(namingPlatform);
   const routingBlock: string = routingBlockMod.createRoutingBlock(toolNamer);
 
   // Initialize per-process state. We do NOT fabricate a sessionId here —
@@ -490,7 +498,7 @@ export async function createContextModePlugin(ctx: PluginContext) {
 
       let decision;
       try {
-        decision = routing.routePreToolUse(toolName, toolInput, projectDir, platform);
+        decision = routing.routePreToolUse(toolName, toolInput, projectDir, namingPlatform);
       } catch {
         return; // Routing failure → allow passthrough
       }
