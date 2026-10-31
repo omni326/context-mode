@@ -4921,15 +4921,27 @@ async function main() {
   sentinelRefresh.unref();
 
   // Detect platform adapter — stored for platform-aware session paths
-  try {
-    const { detectPlatform, getAdapter } = await import("./adapters/detect.js");
-    const clientInfo = server.server.getClientVersion();
-    const signal = detectPlatform(clientInfo ?? undefined);
-    _detectedAdapter = await getAdapter(signal.platform);
-    if (clientInfo) {
-      console.error(`MCP client: ${clientInfo.name} v${clientInfo.version} → ${signal.platform}`);
-    }
-  } catch { /* best effort — _detectedAdapter stays null, falls back to .claude */ }
+  const resolveAdapter = async () => {
+    try {
+      const { detectPlatform, getAdapter } = await import("./adapters/detect.js");
+      const clientInfo = server.server.getClientVersion();
+      const signal = detectPlatform(clientInfo ?? undefined);
+      _detectedAdapter = await getAdapter(signal.platform);
+      if (clientInfo) {
+        console.error(`MCP client: ${clientInfo.name} v${clientInfo.version} → ${signal.platform}`);
+      }
+    } catch { /* best effort — _detectedAdapter stays null, falls back to .claude */ }
+  };
+  await resolveAdapter();
+
+  // connect() returns before the client's `initialize` request is handled, so
+  // getClientVersion() is still undefined above and detection can only use env
+  // vars. OpenCode exports no OPENCODE_* into its MCP stdio child (those are set
+  // only for its own PTY terminals), so that pre-initialize guess lands on the
+  // ~/.claude fallback and would pin the storage root for the whole process
+  // lifetime — splitting state from the in-process V2 plugin, which writes under
+  // ~/.config/opencode. Re-resolve once the client has initialized.
+  server.server.oninitialized = () => { void resolveAdapter(); };
 
   // Restore tool-call counters from SessionDB BEFORE the heartbeat fires
   // so the very first persistStats() carries the prior PID's totals into

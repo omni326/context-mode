@@ -44,3 +44,20 @@ describe("ctx_search timeline mode wiring (server.ts)", () => {
     );
   });
 });
+
+describe("adapter detection timing (server.ts)", () => {
+  it("re-resolves the adapter once the client has initialized", () => {
+    // connect() returns before the client's `initialize` request is handled, so
+    // the connect-time detect has no clientInfo. Clients that export no platform
+    // env into the MCP child (OpenCode) would otherwise keep the pre-initialize
+    // ~/.claude fallback for the whole process lifetime.
+    const initial = SERVER_SRC.indexOf("await resolveAdapter();");
+    expect(initial).toBeGreaterThan(-1);
+    expect(SERVER_SRC).toMatch(
+      /server\.server\.oninitialized\s*=\s*\(\)\s*=>\s*\{\s*void resolveAdapter\(\);?\s*;?\s*\}/,
+    );
+    expect(
+      SERVER_SRC.search(/server\.server\.oninitialized\s*=/),
+    ).toBeGreaterThan(initial);
+  });
+});
