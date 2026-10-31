@@ -406,9 +406,9 @@ export class OpenCodeAdapter extends BaseAdapter implements HookAdapter {
       return results;
     }
 
-    // Check for "context-mode" in plugin array
+    // Check for "context-mode" in plugin array (`plugins` is the OpenCode 2 name)
     const hasPlugin = this.hasContextModePlugin(settings);
-    if (Array.isArray(settings.plugin)) {
+    if (Array.isArray(settings.plugin) || Array.isArray(settings.plugins)) {
       results.push({
         check: "Plugin registration",
         status: hasPlugin ? "pass" : "fail",
@@ -498,17 +498,32 @@ export class OpenCodeAdapter extends BaseAdapter implements HookAdapter {
   configureAllHooks(_pluginRoot: string): string[] {
     const settings = this.readSettings() ?? {};
     const changes: string[] = [];
+    // Only write when something actually changed — this is the user's own config
+    // file and writeSettings() re-serializes it, dropping comments/formatting.
+    let dirty = false;
 
-    // Add "context-mode" to the plugin array
-    const plugins = (settings.plugin ?? []) as string[];
-    if (!plugins.some((p) => p.includes("context-mode"))) {
-      plugins.push("context-mode");
-      changes.push("Added context-mode to plugin array");
+    // OpenCode 2 renamed `plugin` to `plugins` and only loads local plugins as
+    // directories. Writing the V1 key into a V2 config registers a
+    // `{ id, server }` entry that V2 refuses to run, so a V2 config is left
+    // untouched here and the user's own directory entry stands.
+    if (Array.isArray(settings.plugins)) {
+      changes.push(
+        this.hasContextModePlugin(settings)
+          ? 'context-mode already in the OpenCode 2 "plugins" array'
+          : 'OpenCode 2 "plugins" array has no context-mode entry — add the plugin directory manually (the bare npm entry does not load in V2)',
+      );
     } else {
-      changes.push("context-mode already in plugin array");
+      // Add "context-mode" to the plugin array
+      const plugins = (settings.plugin ?? []) as string[];
+      if (!plugins.some((p) => p.includes("context-mode"))) {
+        plugins.push("context-mode");
+        settings.plugin = plugins;
+        changes.push("Added context-mode to plugin array");
+        dirty = true;
+      } else {
+        changes.push("context-mode already in plugin array");
+      }
     }
-
-    settings.plugin = plugins;
 
     const mcp = settings.mcp;
     if (mcp && typeof mcp === "object" && !Array.isArray(mcp)) {
@@ -516,11 +531,15 @@ export class OpenCodeAdapter extends BaseAdapter implements HookAdapter {
       if (Object.prototype.hasOwnProperty.call(servers, "context-mode")) {
         delete servers["context-mode"];
         changes.push("Removed legacy context-mode MCP block (plugin-native tools)");
+        dirty = true;
       }
-      if (Object.keys(servers).length === 0) delete settings.mcp;
+      if (Object.keys(servers).length === 0) {
+        delete settings.mcp;
+        dirty = true;
+      }
     }
 
-    this.writeSettings(settings);
+    if (dirty) this.writeSettings(settings);
     return changes;
   }
 
@@ -558,8 +577,15 @@ export class OpenCodeAdapter extends BaseAdapter implements HookAdapter {
    * Check whether a settings object has the context-mode plugin registered.
    */
   private hasContextModePlugin(settings: Record<string, unknown>): boolean {
-    const plugins = settings.plugin;
-    return Array.isArray(plugins) && plugins.some((p: unknown) => typeof p === "string" && p.includes("context-mode"));
+    // OpenCode 2 renamed `plugin` to `plugins`; both shapes are seen in the wild.
+    for (const key of ["plugin", "plugins"]) {
+      const list = settings[key];
+      if (
+        Array.isArray(list) &&
+        list.some((p: unknown) => typeof p === "string" && p.includes("context-mode"))
+      ) return true;
+    }
+    return false;
   }
 
   private hasLegacyContextModeMcp(settings: Record<string, unknown>): boolean {
