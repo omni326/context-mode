@@ -69,6 +69,7 @@ import { getHookScriptPaths } from "./util/hook-config.js";
 import { stripJsonComments } from "./util/jsonc.js";
 import { resolveClaudeConfigDir } from "./util/claude-config.js";
 import { resolveProjectDir } from "./util/project-dir.js";
+import { isForkSource, upgradeRepo } from "./util/upgrade-source.js";
 import { loadDatabase } from "./db-base.js";
 import { AnalyticsEngine, formatReport, getConversationStats, getContentBytesAllSessions, getConversationWindowStats, getLifetimeStats, getMultiAdapterLifetimeStats, getRealBytesStats, pricePerToken } from "./session/analytics.js";
 const __pkg_dir = dirname(fileURLToPath(import.meta.url));
@@ -778,6 +779,10 @@ const VERSION_BURST_SIZE = 3;
 const VERSION_SILENT_MS = 60 * 60 * 1000; // 1 hour
 
 async function fetchLatestVersion(): Promise<string> {
+  // A fork build is not on npm, so the registry's latest says nothing about
+  // what is installed here — and "outdated" would nag toward an npm install
+  // that replaces the fork with upstream.
+  if (isForkSource()) return "unknown";
   return new Promise((res) => {
     const req = httpsRequest(
       "https://registry.npmjs.org/context-mode/latest",
@@ -4343,7 +4348,7 @@ server.registerTool(
     } else {
       // Inline fallback: neither CLI file exists (e.g. marketplace installs).
       // Generate a self-contained node -e script that performs the upgrade.
-      const repoUrl = "https://github.com/mksglu/context-mode.git";
+      const repoUrl = upgradeRepo();
       // Write inline script to a temp .mjs file — avoids quote-escaping issues
       // across cmd.exe, PowerShell, and bash (node -e '...' breaks on Windows).
       const scriptLines = [

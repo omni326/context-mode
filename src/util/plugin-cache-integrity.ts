@@ -25,6 +25,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { upgradeRepoLabel } from "./upgrade-source.js";
 
 interface IntegrityResult {
   readonly ok: boolean;
@@ -147,7 +148,7 @@ export function checkPluginCacheIntegritySync(
         detail:
           `partial install — critical launch files missing: ${launchMissing.join(", ")} ` +
           `(integrity helper also missing: ${cachedError}); the MCP server cannot start. ` +
-          `Reinstall: npm install -g context-mode@latest`,
+          `Reinstall: context-mode upgrade (builds from ${upgradeRepoLabel()})`,
       };
     }
     return {

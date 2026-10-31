@@ -241,7 +241,8 @@ export function formatPartialInstallReport({ pluginRoot, missing }) {
     `  pluginRoot: ${pluginRoot}`,
     "  missing:",
     ...missing.map((m) => `    - ${m}`),
-    "  fix: rm -rf the install dir and re-pull (marketplace) or run `npm install -g context-mode` again.",
+    "  fix: rm -rf the install dir and re-pull (marketplace) or run `context-mode upgrade`" +
+      " (rebuilds from the configured upgrade repo; `npm install -g context-mode` would replace a fork build with upstream).",
     "",
   ];
   return lines.join("\n");

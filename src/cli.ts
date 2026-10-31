@@ -43,6 +43,7 @@ import { ContentStore } from "./store.js";
 import { readToolDenyPatterns, evaluateFilePath } from "./security.js";
 // v1.0.128 — Issue #559 sibling MCP kill helpers (see PR-559-560-FIX-DESIGN.md).
 import { discoverSiblingMcpPids, killSiblingMcpServers } from "./util/sibling-mcp.js";
+import { isForkSource, upgradeRepo, upgradeRepoLabel } from "./util/upgrade-source.js";
 // v1.0.119 — Issue #523 Layer 5 heal: post-bump assertion on .claude-plugin/plugin.json
 // mcpServers args. Single source of truth shared with start.mjs HEAL block + postinstall.
 // @ts-expect-error — JS module, no TS declarations
@@ -382,6 +383,9 @@ function getLocalVersion(): string {
 }
 
 async function fetchLatestVersion(): Promise<string> {
+  // A fork build is not on npm, so the registry's latest says nothing about
+  // what is installed here (and an npm upgrade would replace it with upstream).
+  if (isForkSource()) return "unknown";
   // Use node:https instead of global fetch to avoid a Windows libuv assertion
   // (UV_HANDLE_CLOSING) caused by undici's connection-pool background threads
   // racing with process.exit() teardown on Node.js v24+.
@@ -1154,7 +1158,10 @@ async function doctor(): Promise<number> {
   if (latestVersion === "unknown") {
     p.log.warn(
       color.yellow("npm (MCP): WARN") +
-        ` — local v${localVersion}, could not reach npm registry`,
+        ` — local v${localVersion}, ` +
+        (isForkSource()
+          ? `built from ${upgradeRepoLabel()}, which is not published on npm`
+          : "could not reach npm registry"),
     );
   } else if (localVersion === latestVersion) {
     p.log.success(
@@ -1302,10 +1309,10 @@ async function upgrade(opts?: { platform?: string }) {
   const localVersion = getLocalVersion();
   const tmpDir = join(tmpdir(), `context-mode-upgrade-${Date.now()}`);
 
-  s.start("Cloning mksglu/context-mode");
+  s.start(`Cloning ${upgradeRepoLabel()}`);
   try {
     execFileSync(
-      "git", ["clone", "--depth", "1", "https://github.com/mksglu/context-mode.git", tmpDir],
+      "git", ["clone", "--depth", "1", upgradeRepo(), tmpDir],
       { stdio: "pipe", timeout: 30000 },
     );
     s.stop("Downloaded");
@@ -1316,12 +1323,16 @@ async function upgrade(opts?: { platform?: string }) {
     );
     const newVersion = newPkg.version ?? "unknown";
     
-    if (newVersion === localVersion) {
+    // A fork's branch tip moves without a version bump, so version equality
+    // proves nothing there — always rebuild and reinstall.
+    if (newVersion === localVersion && !isForkSource()) {
       p.log.success(color.green("Already on latest") + ` — v${localVersion}`);
       rmSync(tmpDir, { recursive: true, force: true });
     } else {
       p.log.info(
-        `Update available: ${color.yellow("v" + localVersion)} → ${color.green("v" + newVersion)}`,
+        newVersion === localVersion
+          ? `Reinstalling v${newVersion} from ${upgradeRepoLabel()} branch tip`
+          : `Update available: ${color.yellow("v" + localVersion)} → ${color.green("v" + newVersion)}`,
       );
 
       // v1.0.128 — Issue #559: terminate sibling MCP servers BEFORE installing
