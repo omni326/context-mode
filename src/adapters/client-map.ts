@@ -11,6 +11,11 @@ import type { PlatformId } from "./types.js";
 
 export const CLIENT_NAME_TO_PLATFORM: Record<string, PlatformId> = {
   "claude-code": "claude-code",
+  // OpenCode (V1 and 2.x) sends clientInfo.name = "opencode" and exports no
+  // OPENCODE_* env into its MCP stdio child, so without this entry detection
+  // falls through to config-dir probing and roots an OpenCode session under
+  // ~/.claude.
+  "opencode": "opencode",
   "gemini-cli-mcp-client": "gemini-cli",
   "antigravity-client": "antigravity",
   "antigravity-cli": "antigravity-cli",

@@ -409,6 +409,18 @@ describe("detectPlatform", () => {
     expect(signal.reason).toContain("clientInfo");
   });
 
+  // OpenCode's MCP stdio child inherits no OPENCODE_* env (those are only set
+  // for its own PTY terminals), so clientInfo is the only signal that keeps an
+  // OpenCode session rooted under ~/.config/opencode instead of falling back to
+  // ~/.claude — the plugin process and the MCP child otherwise split storage
+  // across two roots.
+  it("returns opencode when clientInfo name is opencode", () => {
+    const signal = detectPlatform({ name: "opencode", version: "2.0" });
+    expect(signal.platform).toBe("opencode");
+    expect(signal.confidence).toBe("high");
+    expect(signal.reason).toContain("clientInfo");
+  });
+
   it("clientInfo takes priority over env vars", () => {
     process.env.CLAUDE_PROJECT_DIR = "/some/project";
     const signal = detectPlatform({ name: "antigravity-client", version: "1.0" });
