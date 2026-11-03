@@ -9,7 +9,7 @@
  */
 
 import type { Database as DatabaseInstance } from "better-sqlite3";
-import { loadDatabase, applyWALPragmas, closeDB, cleanOrphanedWALFiles, withRetry, deleteDBFiles, isSQLiteCorruptionError } from "./db-base.js";
+import { loadDatabase, applyWALPragmas, closeDB, withRetry, renameCorruptDB, isSQLiteCorruptionError } from "./db-base.js";
 import type { PreparedStatement } from "./db-base.js";
 import { readFileSync, readdirSync, unlinkSync, existsSync, statSync, openSync, fstatSync, closeSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -409,7 +409,9 @@ export class ContentStore {
     const Database = loadDatabase();
     this.#dbPath =
       dbPath ?? join(tmpdir(), `context-mode-${process.pid}.db`);
-    cleanOrphanedWALFiles(this.#dbPath);
+    // No pre-open WAL/SHM cleanup: a stray -wal implies a live or recently-live
+    // owner, and unlinking it from another process destroys committed data. Two
+    // windows of a brand-new project booting together was exactly that case.
     let db: DatabaseInstance;
     try {
       db = new Database(this.#dbPath, { timeout: 30000 });
@@ -417,8 +419,10 @@ export class ContentStore {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (isSQLiteCorruptionError(msg)) {
-        deleteDBFiles(this.#dbPath);
-        cleanOrphanedWALFiles(this.#dbPath);
+        // Keep a forensic copy (mirrors SQLiteBase); deleting here destroyed the
+        // whole project knowledge base, and "file is not a database" is also what
+        // a peer's half-created file looks like after a crash mid-create.
+        renameCorruptDB(this.#dbPath);
         try {
           db = new Database(this.#dbPath, { timeout: 30000 });
           applyWALPragmas(db);

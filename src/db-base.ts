@@ -551,7 +551,10 @@ export abstract class SQLiteBase {
   constructor(dbPath: string) {
     const Database = loadDatabase();
     this.#dbPath = dbPath;
-    cleanOrphanedWALFiles(dbPath);
+    // No pre-open WAL/SHM sweep. Multi-writer is the documented contract here
+    // (ADR 0001), and "our .db is missing" only means this process has not
+    // opened it yet — a peer window may have created it and committed into its
+    // WAL a moment ago, which is exactly what this call used to delete.
     let db: DatabaseInstance;
     try {
       db = new Database(dbPath, { timeout: 30000 });
