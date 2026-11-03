@@ -551,7 +551,7 @@ export { default } from "<prefix>/lib/node_modules/context-mode/build/adapters/o
 { "plugins": ["<your-dir>/context-mode-v2"] }
 ```
 
-Two OpenCode-2 specifics this entry handles that a naive port misses (both
+Three OpenCode-2 specifics this entry handles that a naive port misses (all
 verified against a running OpenCode 2):
 
 1. **System-prompt injection needs a whole-array reassignment.** V2's `context`
@@ -565,6 +565,16 @@ verified against a running OpenCode 2):
    server for the 11 tools. To run fully in-process (no MCP child), remove the
    `mcp.servers.context-mode` entry and set `CONTEXT_MODE_PLUGIN_TOOLS=1`.
 
+3. **Stale tool results can be pruned from the outgoing request only.** With
+   `CONTEXT_MODE_PRUNE_STALE=1` the `context` hook replaces consumed, oversized,
+   non-failed tool results that sit outside the keep window with explicit pointers:
+   a `read` result points at its own input path, anything else points at `ctx_search`.
+   Pruning is virtual — it changes only what the model is sent, never what is
+   stored. Verified against a running OpenCode 2: the model could no longer recall
+   a pruned 6.5KB file dump, while `session_message` in the database still carried
+   the original bytes and held no placeholder. Decisions are remembered per session
+   so the same messages keep the same bytes (a flipped prefix invalidates the warm
+   KV-cache). Off by default until the recall test passes.
 Keep `mcp.servers.context-mode` configured alongside `plugin-v2` — the plugin
 provides hooks (prompt capture, routing-block injection, compaction snapshots,
 tool telemetry) that MCP alone cannot; MCP provides the tools. This is the
@@ -1684,6 +1694,12 @@ That blocks loopback + RFC1918 + ULA in addition to the always-blocked ranges. U
 |---|---|---|
 | `CONTEXT_MODE_BASH_REROUTE` | unset (off) | Replaces the advisory Bash nudge with a hard reroute: an unbounded command (one the structurally-bounded allowlist cannot bound) is rewritten before execution into an explicit instruction to run it through `ctx_batch_execute`, so its output never enters the context window. Structurally-bounded commands such as `git status` are untouched, and when no context-mode MCP tools are visible the call falls back to the nudge. The replacement text is byte-deterministic (no timestamps), so the KV-cache prefix stays stable. Off by default: a reroute replaces the command, which is a behaviour change for every user until the recall test passes. |
 | `CONTEXT_MODE_EXTERNAL_MCP_NUDGE_EVERY` | `10` | Cadence (in tool calls) at which the PreToolUse hook re-injects the "wrap large external-MCP payloads in `ctx_execute`" guidance. The original implementation ([#529](https://github.com/mksglu/context-mode/pull/529)) fired only once per session, which got lost after context compaction in MCP-heavy sessions (e.g. 50+ Jira/Slack/Notion calls — see [#567](https://github.com/mksglu/context-mode/issues/567) follow-up). The default re-fires every 10th matching call, keeping the guidance in the model's recent window. Range `[1, 100]`; invalid values fall back to `10`. Set to `1` for "every call" (most aggressive — adds ~250 tokens/call) or to a larger value for less frequent reminders. |
+
+### History-window environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CONTEXT_MODE_PRUNE_STALE` | unset (off) | Enables virtual pruning of consumed tool results in the OpenCode 2 plugin. Tool results outside the keep window (last 3 results, and everything within 15k tokens of the tail) that are larger than 4KB and do not look like a failure are replaced, in the outgoing request only, by a one-line pointer. Pruning waits until at least 20KB can be reclaimed, so the cost of an invalidated prefix is paid for. Persisted history is never rewritten: the raw output stays in the session store and can still be re-read, exported, or audited. |
 
 ## Contributing
 
