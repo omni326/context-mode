@@ -518,10 +518,14 @@ export async function createContextModePlugin(ctx: PluginContext) {
         Object.assign(output.args, decision.updatedInput);
       }
 
-      if (decision.action === "context" && decision.additionalContext) {
-        // Mutate output.args — OpenCode reads the mutated output object
-        output.args.additionalContext = decision.additionalContext;
-      }
+      // "context" (advisory guidance) is deliberately NOT delivered here. OpenCode's
+      // tool.execute.before exposes only `args`, which are the tool's inputs: writing
+      // `additionalContext` into them never reached the model as guidance, and it added
+      // a key outside the tool's schema. Host builtins tolerate the extra key; a host
+      // that exposes MCP tools by bare name (Codex / OpenClaw / Pi) would pass it to a
+      // schema-validating server, and `read_file` / `grep_search` are aliases of
+      // Read/Grep — so e.g. a Serena read_file call would be rejected outright.
+      // Guidance on OpenCode travels in the routing block (system/context hook).
     },
 
     // ── PostToolUse: Session event capture ──────────────

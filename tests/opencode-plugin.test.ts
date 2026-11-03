@@ -462,17 +462,23 @@ describe("ContextModePlugin", () => {
       expect(result).toBeUndefined();
     });
 
-    it("injects guidance for allowed grep commands", async () => {
+    it("does not smuggle guidance into the tool's arguments", async () => {
       const plugin = await createTestPlugin(join(tempDir, "before-guidance"));
 
       const input = { tool: "grep", sessionID: "test-session", callID: "call-4" };
-      const output = { args: { command: "grep hello", additionalContext: undefined } };
+      const output = { args: { pattern: "hello", path: "." } };
 
       await plugin["tool.execute.before"](input, output);
 
-      // Guidance should be injected as additionalContext in args
-      expect(output.args).toHaveProperty("additionalContext");
-      expect(output.args.additionalContext).toContain("<context_guidance>");
+      // `action: "context"` has no channel in OpenCode's tool.execute.before — the
+      // only field is `args`, which are the TOOL's inputs. Writing
+      // `additionalContext` there never reached the model as guidance; it added a
+      // key outside the tool's schema. Host builtins tolerate it, but hosts that
+      // expose MCP tools by bare name (Codex / OpenClaw / Pi) would hand the extra
+      // kwarg to a schema-validating server: `read_file` and `grep_search` are
+      // aliases of Read/Grep, so e.g. Serena's read_file would be rejected outright.
+      // Guidance for OpenCode travels in the routing block instead.
+      expect(output.args).toEqual({ pattern: "hello", path: "." });
     });
   });
 
