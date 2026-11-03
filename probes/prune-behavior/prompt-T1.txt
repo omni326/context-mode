@@ -1,0 +1,1 @@
+Read the file ledger.txt in this project with the read tool, all 400 lines. Do not quote or summarize any line in your reply. Reply with just READ.

@@ -185,7 +185,13 @@ export default Plugin.define({
     // sent without rewriting persisted history (probe 0.3 proved both halves:
     // the rewrite reaches the model, the DB keeps the raw bytes). Consumed,
     // large, non-failed tool results outside the keep window become explicit
-    // pointers. Default off until the recall test (plan.md item 12) passes.
+    // pointers. Both gates now measure green (probes/recall-probe.mjs for
+    // index-side recall, probes/prune-behavior/ for "does the model follow the
+    // pointer"), but the flag stays off by default: it is a behaviour change
+    // for every session. On OpenCode 2 an MCP call persists as tool `execute`,
+    // never as `ctx_search`, so in practice only `read`-like results get pruned
+    // on this host — the store-backed `ctx_*` branch fires on hosts that expose
+    // MCP tools as their own tool results.
     // shortcut: prune decisions live in this process; after a restart the first
     // request rebuilds the prefix anyway (KV-cache is cold), upgrade to a
     // per-session file if restart-driven cache misses ever show up in cost.

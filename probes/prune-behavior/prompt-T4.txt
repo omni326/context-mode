@@ -1,0 +1,1 @@
+Earlier in this session you read ledger.txt, which contains a line "FLUSH-7731 = <hex>". What is the exact hex value after the equals sign? If you no longer have it in your context, recover it rather than guessing. Do not read fill.txt.

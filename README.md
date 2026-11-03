@@ -583,7 +583,12 @@ verified against a running OpenCode 2):
    a pruned 6.5KB file dump, while `session_message` in the database still carried
    the original bytes and held no placeholder. Decisions are remembered per session
    so the same messages keep the same bytes (a flipped prefix invalidates the warm
-   KV-cache). Off by default until the recall test passes.
+   KV-cache). Both gates now measure green — `probes/recall-probe.mjs` (index-side recall,
+321/321) and `probes/prune-behavior/` (behavioural: with the flag on, the pruned
+request carried the pointer and not the secret, and the model still returned the
+exact value, recovered in-turn from the file; the control arm showed no
+placeholder) — but the flag stays off by default: it is a behaviour change for
+every session.
 Keep `mcp.servers.context-mode` configured alongside `plugin-v2` — the plugin
 provides hooks (prompt capture, routing-block injection, compaction snapshots,
 tool telemetry) that MCP alone cannot; MCP provides the tools. This is the
@@ -1709,7 +1714,7 @@ That blocks loopback + RFC1918 + ULA in addition to the always-blocked ranges. U
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CONTEXT_MODE_PRUNE_STALE` | unset (off) | Enables virtual pruning of consumed tool results in the OpenCode 2 plugin. Results outside the keep window (last 3 results, and everything within 15k tokens of the tail) that are larger than 4KB, do not look like a failure, and are recoverable (`read`-like tools whose file is still on disk, `ctx_*` tools whose output is already in the knowledge base) are replaced, in the outgoing request only, by a one-line pointer. Pruning waits until at least 20KB can be reclaimed, so the cost of an invalidated prefix is paid for. Native `shell` results are excluded: nothing indexes native stdout, so pruning one would be irreversible. One exception to "recoverable": anything indexed from now on passes the index-time redaction, so a credential value is stored as `[REDACTED…]` — a pruned result whose identifying token was that secret cannot be searched back, and the pointer does not apply to it (measured: 321/321 recall over 1.48MB of real captured logs, none of which happened to carry a secret; see `probes/recall-probe.mjs`). Persisted history is never rewritten — the raw output stays in the session store and can still be re-read, exported, or audited. |
+| `CONTEXT_MODE_PRUNE_STALE` | unset (off) | Enables virtual pruning of consumed tool results in the OpenCode 2 plugin. Results outside the keep window (last 3 results, and everything within 15k tokens of the tail) that are larger than 4KB, do not look like a failure, and are recoverable (`read`-like tools whose file is still on disk, `ctx_*` tools whose output is already in the knowledge base) are replaced, in the outgoing request only, by a one-line pointer. Pruning waits until at least 20KB can be reclaimed, so the cost of an invalidated prefix is paid for. Native `shell` results are excluded: nothing indexes native stdout, so pruning one would be irreversible. One exception to "recoverable": anything indexed from now on passes the index-time redaction, so a credential value is stored as `[REDACTED…]` — a pruned result whose identifying token was that secret cannot be searched back, and the pointer does not apply to it (measured: 321/321 recall over 1.48MB of real captured logs, none of which happened to carry a secret; see `probes/recall-probe.mjs`). Persisted history is never rewritten — the raw output stays in the session store and can still be re-read, exported, or audited. Host shape: on OpenCode 2 an MCP call persists as tool `execute`, never as `ctx_search`, so in practice only `read`-like results are pruned on that host; the store-backed `ctx_*` rule applies to hosts that expose MCP tools as their own tool results. |
 
 ## Contributing
 

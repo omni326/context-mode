@@ -1,0 +1,5 @@
+In ONE assistant message, run each of these three shell commands as a separate shell tool call:
+  wc -l ledger.txt
+  head -c 120 ledger.txt
+  tail -c 120 ledger.txt
+Then reply with just THREE.
