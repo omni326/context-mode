@@ -19,7 +19,7 @@
  */
 
 import { join, dirname } from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync, renameSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -465,12 +465,22 @@ export function hookMarkerPath(prefix, sessionId, callId) {
 }
 
 function readAndUnlink(path) {
+  // Claim by rename before reading — the house pattern (src/server.ts:526). Two
+  // PostToolUse processes for parallel calls can both land on the same fallback
+  // marker; a plain read-then-unlink lets both read it and the event gets counted
+  // twice. Rename is atomic, so exactly one process wins the claim.
+  const claimed = `${path}.claim-${process.pid}`;
   try {
-    const data = readFileSync(path, "utf-8").trim();
-    if (!data) return "";
-    unlinkSync(path);
+    renameSync(path, claimed);
+  } catch { /* absent, or lost the claim to another process */ return ""; }
+  try {
+    const data = readFileSync(claimed, "utf-8").trim();
+    unlinkSync(claimed);
     return data;
-  } catch { /* absent, or raced with another process */ return ""; }
+  } catch {
+    try { renameSync(claimed, path); } catch { /* best-effort retry */ }
+    return "";
+  }
 }
 
 /**

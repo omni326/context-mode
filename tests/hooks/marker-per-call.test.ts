@@ -17,6 +17,8 @@ import { describe, test, expect, afterEach } from "vitest";
 import { writeFileSync, existsSync, utimesSync, readFileSync, rmSync } from "node:fs";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { hookMarkerPath, readAndConsumeHookMarker } from "../../hooks/session-helpers.mjs";
 
 const sid = `percall-${Date.now()}`;
@@ -90,5 +92,24 @@ describe("per-call hook markers", () => {
     write(other, "not ours");
     expect(readAndConsumeHookMarker("context-mode-rejected-", sid, "tu-ZZZ")).toBe("");
     expect(readFileSync(other, "utf-8")).toBe("not ours");
+  });
+
+  test("two processes racing for one marker: exactly one gets the event", async () => {
+    // Cross-process on purpose — the double count this prevents needs two PostToolUse
+    // processes. Scheduling-independent: an early loser loses the rename, a late loser
+    // reads nothing, so exactly one process can see the bytes either way.
+    const helpers = fileURLToPath(new URL("../../hooks/session-helpers.mjs", import.meta.url));
+    const marker = hookMarkerPath("context-mode-rejected-", sid, "tu-RACE");
+    write(marker, "Bash: denied once");
+    const script =
+      `import(${JSON.stringify(helpers)}).then(m =>` +
+      ` process.stdout.write(m.readAndConsumeHookMarker("context-mode-rejected-", process.argv[1], process.argv[2])))`;
+    const grab = () =>
+      new Promise<string>((res) => {
+        execFile(process.execPath, ["-e", script, sid, "tu-RACE"], (err, out) => res(err ? "" : out));
+      });
+    const both = await Promise.all([grab(), grab()]);
+    expect(both.filter((x) => x === "Bash: denied once").length).toBe(1);
+    expect(existsSync(marker)).toBe(false);
   });
 });
