@@ -28,7 +28,7 @@ await runHook(async () => {
   const { readStdin } = await import("./core/stdin.mjs");
   const { routePreToolUse, initSecurity } = await import("./core/routing.mjs");
   const { formatDecision } = await import("./core/formatters.mjs");
-  const { parseStdin, getInputProjectDir, getSessionId, resolveConfigDir } = await import("./session-helpers.mjs");
+  const { parseStdin, getInputProjectDir, getSessionId, resolveConfigDir, hookMarkerPath } = await import("./session-helpers.mjs");
 
   // ─── Manual recursive copy (avoids cpSync libuv crash on non-ASCII paths, Windows + Node 24) ───
   function copyDirSync(src, dest) {
@@ -192,7 +192,7 @@ await runHook(async () => {
       const reason = decision.action === "deny"
         ? (decision.reason || "denied")
         : "Redirected to context-mode sandbox";
-      const markerPath = resolve(tmpdir(), `context-mode-rejected-${sessionId}.txt`);
+      const markerPath = hookMarkerPath("context-mode-rejected-", sessionId, input.tool_use_id);
       writeFileSync(markerPath, `${tool}:${reason}`, "utf-8");
     } catch { /* best-effort — never block hook */ }
   }
@@ -208,7 +208,7 @@ await runHook(async () => {
       const sessionId = getSessionId(input);
       const meta = decision.redirectMeta;
       const summary = String(meta.commandSummary ?? "").slice(0, 200);
-      const markerPath = resolve(tmpdir(), `context-mode-redirect-${sessionId}.txt`);
+      const markerPath = hookMarkerPath("context-mode-redirect-", sessionId, input.tool_use_id);
       // Format: tool:type:bytesAvoided:commandSummary (matches Override C).
       // commandSummary may legitimately contain `:` (URLs) — don't quote it,
       // PostToolUse parses only the first 3 colons and treats the rest as data.

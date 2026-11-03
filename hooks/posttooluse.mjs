@@ -20,6 +20,7 @@ await runHook(async () => {
     getSessionDBPath,
     getInputProjectDir,
     sweepStaleHookMarkers,
+    readAndConsumeHookMarker,
   } = await import("./session-helpers.mjs");
   const { createSessionLoaders, attributeAndInsertEvents } = await import("./session-loaders.mjs");
   const { dirname, resolve, basename } = await import("node:path");
@@ -66,12 +67,7 @@ await runHook(async () => {
 
     // ─── Category 18: Rejected-approach — read PreToolUse marker ───
     try {
-      const rejectedPath = resolve(tmpdir(), `context-mode-rejected-${sessionId}.txt`);
-      let rejectedData;
-      try {
-        rejectedData = readFileSync(rejectedPath, "utf-8").trim();
-        unlinkSync(rejectedPath);
-      } catch { /* no marker */ }
+      const rejectedData = readAndConsumeHookMarker("context-mode-rejected-", sessionId, input.tool_use_id);
       if (rejectedData) {
         const colonIdx = rejectedData.indexOf(":");
         const rejTool = colonIdx > 0 ? rejectedData.slice(0, colonIdx) : rejectedData;
@@ -101,14 +97,9 @@ await runHook(async () => {
     // output we kept out of the model's context window (curl/wget, WebFetch,
     // large Read). Format: `tool:type:bytesAvoided:commandSummary` (Override C).
     try {
-      const redirectPath = resolve(tmpdir(), `context-mode-redirect-${sessionId}.txt`);
-      let redirectData;
-      try {
-        redirectData = readFileSync(redirectPath, "utf-8").trim();
-        // Slice 3.3: unlink so the next PostToolUse for an unrelated tool call
-        // does NOT re-emit the same event (no double-accounting).
-        unlinkSync(redirectPath);
-      } catch { /* no marker — Slice 3.4: phantom-event guard */ }
+      // Slice 3.3's rule — consume once so a later PostToolUse cannot re-emit the
+      // same event — now enforced per call: the helper unlinks what it reads.
+      const redirectData = readAndConsumeHookMarker("context-mode-redirect-", sessionId, input.tool_use_id);
 
       if (redirectData) {
         // Parse first 3 colons; the rest (commandSummary) may itself contain

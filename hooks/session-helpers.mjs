@@ -443,6 +443,67 @@ export function sweepStaleHookMarkers(maxAgeMs = 24 * 60 * 60 * 1000) {
 }
 
 /**
+ * Marker path for ONE tool call, keyed by the host's call id when it has one.
+ *
+ * PreToolUse writes a marker per call and PostToolUse consumes it. Hosts run tool
+ * calls in parallel (parallel tool_use blocks, subagents), so a session-wide name
+ * is not safe: the second PreToolUse overwrites the first marker and whichever
+ * PostToolUse runs first consumes the other call's marker — one event lost, the
+ * survivor mis-attributed, and ctx_stats' bytes_avoided wrong with it.
+ * Claude Code / Codex / Cursor send `tool_use_id`; hosts that send nothing keep
+ * the legacy session-wide name, which is today's behaviour.
+ *
+ * The id comes from the host, so it is stripped to filename-safe characters —
+ * `../../etc/passwd` must not become part of the path.
+ */
+export function hookMarkerPath(prefix, sessionId, callId) {
+  const safe = typeof callId === "string" ? callId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64) : "";
+  // `--` because session ids are UUIDs containing single dashes: `${sid}-X` could
+  // also be a DIFFERENT session whose id starts with ours, so the fallback scan
+  // keys on a separator a session id cannot begin with.
+  return join(tmpdir(), safe ? `${prefix}${sessionId}--${safe}.txt` : `${prefix}${sessionId}.txt`);
+}
+
+function readAndUnlink(path) {
+  try {
+    const data = readFileSync(path, "utf-8").trim();
+    if (!data) return "";
+    unlinkSync(path);
+    return data;
+  } catch { /* absent, or raced with another process */ return ""; }
+}
+
+/**
+ * Read and consume the marker belonging to this call: its own id-keyed file
+ * first. If that is absent, fall back to the oldest marker of the session — hosts
+ * whose Pre and Post ids differ (Cursor sends two distinct ids) would otherwise
+ * lose the event outright, which is worse than today's mis-pairing.
+ * shortcut: the fallback cannot pair correctly when ids disagree; upgrade if a
+ * host-level id-pairing rule ever becomes available.
+ */
+export function readAndConsumeHookMarker(prefix, sessionId, callId) {
+  const exact = readAndUnlink(hookMarkerPath(prefix, sessionId, callId));
+  if (exact) return exact;
+  const stem = `${prefix}${sessionId}`;
+  try {
+    const dir = tmpdir();
+    const found = [];
+    for (const name of readdirSync(dir)) {
+      // `${stem}--` guards against a longer session id that starts with ours.
+      if (name !== `${stem}.txt` && !name.startsWith(`${stem}--`)) continue;
+      const full = join(dir, name);
+      try { found.push([statSync(full).mtimeMs, full]); } catch { /* vanished */ }
+    }
+    found.sort((a, b) => a[0] - b[0]);
+    for (const [, full] of found) {
+      const data = readAndUnlink(full);
+      if (data) return data;
+    }
+  } catch { /* never block a hook */ }
+  return "";
+}
+
+/**
  * Return the per-project cleanup flag path.
  * Used to detect true fresh starts vs --continue (which fires startup+resume).
  * Path: ~/<configDir>/context-mode/sessions/<canonicalHash><suffix>.cleanup
