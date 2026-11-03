@@ -88,6 +88,21 @@ export function looksFailed(text: string): boolean {
   );
 }
 
+/**
+ * Pruning is only virtual compression when the bytes can come back. Nothing in
+ * context-mode captures the stdout of a NATIVE shell call into the content
+ * store (`maybeIndexSessionEvents()` indexes hook event summaries, not tool
+ * output), so a pruned native result would be unrecoverable and the pointer
+ * would be a lie. Hence:
+ *   - read-like tools  -> the file is still on disk, re-running is recovery
+ *   - `ctx_*` tools    -> their output is in the store by construction
+ *   - anything else    -> not prunable until something captures it (the Bash
+ *     reroute makes those calls come back as `ctx_batch_execute`, which is)
+ */
+export function isRecoverable(name: string): boolean {
+  return /^ctx_/i.test(name) || /read/i.test(name);
+}
+
 /** The tool-call input paired with a result id — the cheapest thing to point at. */
 function pairedInput(messages: any[], id: string): unknown {
   for (const m of messages) {
@@ -129,17 +144,22 @@ export function pruneToolResults(messages: any[], opts: PruneOpts = {}): PruneRe
     for (let pi = 0; pi < parts.length; pi++) {
       const p = parts[pi];
       if (p?.type !== "tool-result") continue;
+      const name = String(p?.name ?? "tool");
       const id = String(p?.id ?? `${mi}:${pi}`);
-      const text = textOf({ content: [p] });
-      const bytes = byteLen(text);
-      const sticky = decided?.has(id) ?? false;
-      if (
-        rank >= keepPairs &&
-        bytesFromEnd >= keepBytes &&
-        !text.startsWith(PLACEHOLDER_MARK) &&
-        (sticky || (bytes >= minBytes && !looksFailed(text)))
-      ) {
-        candidates.push({ mi, pi, id, name: String(p?.name ?? "tool"), bytes, sticky });
+      // No backing store, no pruning — the pointer would promise a recall that
+      // cannot happen. rank still counts it: "recent" is recent regardless.
+      if (isRecoverable(name)) {
+        const text = textOf({ content: [p] });
+        const bytes = byteLen(text);
+        const sticky = decided?.has(id) ?? false;
+        if (
+          rank >= keepPairs &&
+          bytesFromEnd >= keepBytes &&
+          !text.startsWith(PLACEHOLDER_MARK) &&
+          (sticky || (bytes >= minBytes && !looksFailed(text)))
+        ) {
+          candidates.push({ mi, pi, id, name, bytes, sticky });
+        }
       }
       rank++;
     }

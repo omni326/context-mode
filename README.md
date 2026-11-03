@@ -569,6 +569,10 @@ verified against a running OpenCode 2):
    `CONTEXT_MODE_PRUNE_STALE=1` the `context` hook replaces consumed, oversized,
    non-failed tool results that sit outside the keep window with explicit pointers:
    a `read` result points at its own input path, anything else points at `ctx_search`.
+   Only results that can come back are touched: `read`-like tools (the file is still
+   on disk) and `ctx_*` tools (their output is in the knowledge base by construction).
+   A native `shell` result is never pruned — nothing indexes native stdout into the
+   store, so dropping it would be data loss wearing a pointer.
    Pruning is virtual — it changes only what the model is sent, never what is
    stored. Verified against a running OpenCode 2: the model could no longer recall
    a pruned 6.5KB file dump, while `session_message` in the database still carried
@@ -1699,7 +1703,7 @@ That blocks loopback + RFC1918 + ULA in addition to the always-blocked ranges. U
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CONTEXT_MODE_PRUNE_STALE` | unset (off) | Enables virtual pruning of consumed tool results in the OpenCode 2 plugin. Tool results outside the keep window (last 3 results, and everything within 15k tokens of the tail) that are larger than 4KB and do not look like a failure are replaced, in the outgoing request only, by a one-line pointer. Pruning waits until at least 20KB can be reclaimed, so the cost of an invalidated prefix is paid for. Persisted history is never rewritten: the raw output stays in the session store and can still be re-read, exported, or audited. |
+| `CONTEXT_MODE_PRUNE_STALE` | unset (off) | Enables virtual pruning of consumed tool results in the OpenCode 2 plugin. Results outside the keep window (last 3 results, and everything within 15k tokens of the tail) that are larger than 4KB, do not look like a failure, and are recoverable (`read`-like tools whose file is still on disk, `ctx_*` tools whose output is already in the knowledge base) are replaced, in the outgoing request only, by a one-line pointer. Pruning waits until at least 20KB can be reclaimed, so the cost of an invalidated prefix is paid for. Native `shell` results are excluded: nothing indexes native stdout, so pruning one would be irreversible. Persisted history is never rewritten — the raw output stays in the session store and can still be re-read, exported, or audited. |
 
 ## Contributing
 
