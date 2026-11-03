@@ -255,10 +255,8 @@ describe("routePreToolUse", () => {
         command: "./gradlew build",
       });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
-      expect((result!.updatedInput as Record<string, string>).command).toContain(
-        "Build tool redirected",
-      );
+      expect(result!.action).toBe("deny");
+      expect(String(result!.reason)).toContain("Build tool redirected");
     });
 
     it("redirects gradle test to execute sandbox", () => {
@@ -266,7 +264,7 @@ describe("routePreToolUse", () => {
         command: "gradle test --info",
       });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
+      expect(result!.action).toBe("deny");
     });
 
     it("redirects mvn package to execute sandbox", () => {
@@ -274,7 +272,7 @@ describe("routePreToolUse", () => {
         command: "mvn clean package -DskipTests",
       });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
+      expect(result!.action).toBe("deny");
     });
 
     it("redirects ./mvnw verify to execute sandbox", () => {
@@ -282,7 +280,7 @@ describe("routePreToolUse", () => {
         command: "./mvnw verify",
       });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
+      expect(result!.action).toBe("deny");
     });
 
     it("does not false-positive on gradle in quoted text", () => {
@@ -304,10 +302,8 @@ describe("routePreToolUse", () => {
         command: "sbt compile",
       });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
-      expect((result!.updatedInput as Record<string, string>).command).toContain(
-        "Build tool redirected",
-      );
+      expect(result!.action).toBe("deny");
+      expect(String(result!.reason)).toContain("Build tool redirected");
     });
 
     it("redirects ./sbt test to execute sandbox", () => {
@@ -315,7 +311,7 @@ describe("routePreToolUse", () => {
         command: "./sbt test",
       });
       expect(result).not.toBeNull();
-      expect(result!.action).toBe("modify");
+      expect(result!.action).toBe("deny");
     });
 
     it("does not false-positive on substrings like gradle-wrapper-config or mvnDocker", () => {

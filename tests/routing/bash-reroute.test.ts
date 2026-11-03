@@ -56,12 +56,38 @@ describe("Bash reroute", () => {
   it("reroutes unbounded commands to ctx_batch_execute when enabled", async () => {
     process.env.CONTEXT_MODE_BASH_REROUTE = "1";
     const decision = await route(UNBOUNDED);
-    expect(decision?.action).toBe("modify");
-    const cmd = String(decision?.updatedInput?.command ?? "");
-    expect(cmd).toContain("ctx_batch_execute");
-    expect(cmd).toContain("find . -name '*.ts'");   // original command survives verbatim
-    expect(cmd).toContain("rerouted");                  // explicit, never silent
+    expect(decision?.action).toBe("deny");
+    const reason = String(decision?.reason ?? "");
+    expect(reason).toContain("ctx_batch_execute");
+    expect(reason).toContain("find . -name '*.ts'");   // original command survives verbatim
+    expect(reason).toContain("rerouted");                  // explicit, never silent
+    expect(decision?.updatedInput).toBeUndefined();       // nothing is executed on our behalf
     expect(decision?.redirectMeta?.type).toBe("bash-redirected");
+  });
+
+  // The old shape rewrote the command to `echo "…${escaped command}…"`. That
+  // carrier is run by a shell on every host that honors a Bash rewrite (OpenCode
+  // does), so `$VAR`/`$(…)`/backticks in the user's command were EXPANDED into
+  // the model's context — the exact bytes the redirect exists to keep out — and
+  // `\"` collapsed back to `"`, mangling the call the model was told to copy.
+  // A deny reason is a JSON string that never reaches a shell.
+  it("carries shell-sensitive commands verbatim, never through a shell", async () => {
+    process.env.CONTEXT_MODE_BASH_REROUTE = "1";
+    const raw = 'find . -name "*.ts" | xargs grep "$PATTERN" `pwd`';
+    const decision = await route(raw);
+    expect(decision?.action).toBe("deny");
+    expect(decision?.updatedInput).toBeUndefined();
+    expect(String(decision?.reason)).toContain(raw); // byte-identical, unexpanded
+  });
+
+  it("build-tool redirect also denies instead of echoing the command", async () => {
+    // On by default (Issue #38), so this one mattered even before the reroute.
+    const raw = "mvn -DrepoToken=$MAVEN_TOKEN package";
+    const decision = await route(raw);
+    expect(decision?.action).toBe("deny");
+    expect(String(decision?.reason)).toContain("Build tool redirected");
+    expect(String(decision?.reason)).toContain("$MAVEN_TOKEN"); // not expanded, not escaped
+    expect(decision?.updatedInput).toBeUndefined();
   });
 
   it("falls back to the nudge when MCP tools are unavailable", async () => {

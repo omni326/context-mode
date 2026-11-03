@@ -437,10 +437,12 @@ describe("routePreToolUse with platform parameter", () => {
   it("build tool redirect uses platform tool names when platform=gemini-cli", () => {
     const result = routePreToolUse("Bash", { command: "./gradlew build" }, "/tmp", "gemini-cli");
     expect(result).not.toBeNull();
-    expect(result!.action).toBe("modify");
-    const cmd = (result!.updatedInput as Record<string, string>).command;
-    expect(cmd).toContain("mcp__context-mode__ctx_execute");
-    expect(cmd).not.toContain("mcp__plugin_context-mode_context-mode__");
+    // Deny (not an `echo` rewrite): the reason is a JSON string, so the command
+    // can be carried verbatim instead of shell-escaped into a rewrite.
+    expect(result!.action).toBe("deny");
+    const reason = String(result!.reason);
+    expect(reason).toContain("mcp__context-mode__ctx_execute");
+    expect(reason).not.toContain("mcp__plugin_context-mode_context-mode__");
   });
 
   // ─── SLICE Qwen-3: routing.mjs Qwen native names ───

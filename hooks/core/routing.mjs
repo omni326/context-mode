@@ -814,12 +814,17 @@ export function routePreToolUse(toolName, toolInput, projectDir, platform, sessi
     // These produce extremely verbose output that should stay in sandbox.
     // Word-boundary guard prevents matching `gradle-wrapper-config`, `mvnDocker`, etc.
     if (/(^|\s|&&|\||\;)(\.\/gradlew|gradlew|gradle|\.\/mvnw|mvnw|mvn|\.\/sbt|sbt)(\s|$)/i.test(stripped)) {
-      const safeCmd = command.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      // Deny, never an `echo "…"` rewrite. On hosts that honor a Bash rewrite
+      // (OpenCode does), the replacement string is executed by a shell: `$VAR`,
+      // `$(…)` and backticks in the user's command get EXPANDED into the model's
+      // context — the exact bytes this redirect exists to keep out — and `\"`
+      // collapses back to `"`, so the call the model is told to copy comes out
+      // malformed. A deny reason is a JSON string that never reaches a shell, so
+      // the command can be carried verbatim. Claude Code's formatter already turns
+      // a Bash-command redirect into deny+reason, so this changes nothing there.
       return mcpRedirect({
-        action: "modify",
-        updatedInput: {
-          command: `echo "context-mode: Build tool redirected. Call ${t("ctx_execute")}(language: \\"shell\\", code: \\"${safeCmd} 2>&1 | tail -30\\") to run the build and print only the tail — the verbose build log stays in the sandbox instead of entering your conversation. For more targeted output, replace \\"tail -30\\" with \\"grep -E '(error|warning|FAIL|✗|×)'\\" or similar, so only the lines that matter come back."`,
-        },
+        action: "deny",
+        reason: `context-mode: Build tool redirected, the command was not run. Call ${t("ctx_execute")}(language: "shell", code: <the command below>) to run the build and print only what matters — the verbose build log stays in the sandbox instead of entering your conversation. Pipe it through \`tail -30\`, or narrow it with \`grep -E '(error|warning|FAIL|✗|×)'\`.` + `\n\nCommand: ${command}`,
       }, mcpToolsAvailable);
     }
 
@@ -842,19 +847,18 @@ export function routePreToolUse(toolName, toolInput, projectDir, platform, sessi
       return null;
     }
 
-    // Opt-in hard reroute (CONTEXT_MODE_BASH_REROUTE=1): replace the command with
-    // an explicit instruction to run it through ctx_batch_execute, which executes
-    // it in the sandbox, indexes the full output, and returns only the sections
-    // asked for. Byte-deterministic payload (no timestamps) so the KV-cache prefix
-    // stays stable; explicit and never silent, same convention as the curl/build
-    // redirects above. Falls back to the nudge when MCP tools are not available.
+    // Opt-in hard reroute (CONTEXT_MODE_BASH_REROUTE=1): deny the call and tell the
+    // model to run it through ctx_batch_execute, which executes it in the sandbox,
+    // indexes the full output, and returns only the sections asked for. Byte-
+    // deterministic payload (no timestamps) so the KV-cache prefix stays stable;
+    // explicit and never silent. Deny rather than an `echo` rewrite for the reason
+    // given at the build-tool redirect above — the command is carried verbatim, so
+    // `$VAR`/`$(…)` cannot leak into the context this path exists to protect.
+    // Falls back to the nudge when MCP tools are not available.
     if (process.env[BASH_REROUTE_ENV] === "1") {
-      const safeCmd = command.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       const rerouted = mcpRedirect({
-        action: "modify",
-        updatedInput: {
-          command: `echo "context-mode: unbounded command rerouted. Run ${t("ctx_batch_execute")}({commands:[{label: \\"result\\", command: \\"${safeCmd} 2>&1\\"}], queries:[\\"<what you need from the output>\\"]}) — the command executes in the sandbox, its full output is indexed, and only the sections you query enter your conversation. Recover anything missed later with ${t("ctx_search")}(queries: [...]). If you truly need the raw bytes, use ${t("ctx_execute_file")} instead of re-running this command."`,
-        },
+        action: "deny",
+        reason: `context-mode: unbounded command rerouted, the command was not run. Call ${t("ctx_batch_execute")}({commands:[{label: "result", command: <the command below>}], queries:["<what you need from the output>"]}) — the command runs in the sandbox, its full output is indexed, and only the sections you query enter your conversation. Recover anything missed later with ${t("ctx_search")}(queries: [...]). If you truly need the raw bytes in one piece, read them with ${t("ctx_execute_file")} instead of re-running this command.` + `\n\nCommand: ${command}`,
         redirectMeta: {
           tool: "Bash",
           type: "bash-redirected",
