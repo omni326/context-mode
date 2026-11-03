@@ -230,26 +230,13 @@ export function cleanupStaleContentDBs(contentDir: string, maxAgeDays: number): 
       try {
         const filePath = join(contentDir, file);
         const mtime = statSync(filePath).mtimeMs;
-        let shouldClean = mtime < cutoff;
-
-        // Detect zombie processes holding WAL locks:
-        // If a WAL file exists, try to read the WAL header to extract the PID.
-        // WAL files from dead processes can block new connections.
-        if (!shouldClean) {
-          const walPath = filePath + "-wal";
-          if (existsSync(walPath)) {
-            try {
-              const walStat = statSync(walPath);
-              // If WAL file is non-empty and DB hasn't been modified in >1 hour,
-              // the owning process may be dead — check via mtime staleness
-              if (walStat.size > 0 && (Date.now() - walStat.mtimeMs) > 3600_000) {
-                shouldClean = true;
-              }
-            } catch { /* ignore WAL check errors */ }
-          }
-        }
-
-        if (shouldClean) {
+        // Age only. A previous "zombie" branch deleted any DB whose -wal was
+        // non-empty and untouched for an hour, but that is the normal shape of a
+        // LIVE idle project (SQLite auto-checkpoints only at 1000 pages), so
+        // another project's server startup could wipe a live knowledge base.
+        // SQLite recovers a stray WAL on the next open by itself — nothing here
+        // needs to help a dead process.
+        if (mtime < cutoff) {
           for (const suffix of ["", "-wal", "-shm"]) {
             try { unlinkSync(filePath + suffix); } catch { /* ignore */ }
           }
