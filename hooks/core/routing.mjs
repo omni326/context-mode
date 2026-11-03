@@ -538,6 +538,9 @@ const TOOL_ALIASES = {
   "view": "Read",
   "grep": "Grep",
   "fetch": "WebFetch",
+  // OpenCode 2 renamed the tool to `webfetch` (verified against the tool names in
+  // opencode.db); without this alias the WebFetch redirect never fires there.
+  "webfetch": "WebFetch",
   "agent": "Agent",
   // Codex CLI
   "shell": "Bash",

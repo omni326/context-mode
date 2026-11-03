@@ -428,6 +428,22 @@ describe("routePreToolUse", () => {
       expect(result!.reason).toContain("ctx_search");
     });
 
+    it("treats OpenCode 2's native `webfetch` as WebFetch", () => {
+      // Found by testing the live install: OpenCode 2 names its tools in the
+      // request/parts exactly as `shell`, `read`, `webfetch` (confirmed by reading
+      // tool names out of opencode.db). `shell` and `read` are aliased, `webfetch`
+      // was not, so the redirect silently never fired on the fork's primary host
+      // and full page bytes went straight into the context window.
+      const url = "https://example.com";
+      const result = routePreToolUse("webfetch", { url });
+      expect(result).not.toBeNull();
+      expect(result!.action).toBe("deny");
+      expect(result!.reason).toContain("WebFetch redirected");
+      expect(result!.redirectMeta).toEqual(
+        expect.objectContaining({ type: "webfetch-redirected" }),
+      );
+    });
+
     it("allows WebFetch when MCP server not ready (#230)", () => {
       // Remove sentinel to simulate MCP not started
       try { unlinkSync(mcpSentinel); } catch {}
