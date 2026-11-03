@@ -520,10 +520,21 @@ export function maybeIndexSessionEvents(store: ContentStore): void {
     if (!existsSync(sessionsDir)) return;
     const filePath = resolveSessionPath({ projectDir: getProjectDir(), sessionsDir, ext: "-events.md" });
     if (!existsSync(filePath)) return;
+    // Claim by rename before indexing: two servers booting the same project
+    // must not both index-then-unlink the same bytes. If indexing then fails,
+    // release the claim so the events are retried later instead of destroyed.
+    const claimed = filePath + ".claim-" + process.pid;
     try {
-      store.index({ path: filePath, source: "session-events", attribution: currentAttribution() });
-      unlinkSync(filePath);
-    } catch { /* best-effort per file — a failed index keeps the file for retry */ }
+      renameSync(filePath, claimed);
+    } catch {
+      return; // lost the claim to another process
+    }
+    try {
+      store.index({ path: claimed, source: "session-events", attribution: currentAttribution() });
+      unlinkSync(claimed);
+    } catch {
+      try { renameSync(claimed, filePath); } catch { /* best-effort retry */ }
+    }
   } catch { /* best-effort — session continuity never blocks tools */ }
 }
 
@@ -1105,7 +1116,9 @@ function persistStats(): void {
     };
 
     const filePath = getStatsFilePath();
-    const tmpPath = `${filePath}.tmp`;
+    // Per-process tmp name: a bridge child under the same stats key would
+    // otherwise write (and rename away) the same .tmp file concurrently.
+    const tmpPath = `${filePath}.${process.pid}.tmp`;
     writeFileSync(tmpPath, JSON.stringify(payload));
     renameSync(tmpPath, filePath);
   } catch {

@@ -19,6 +19,7 @@ await runHook(async () => {
     getSessionId,
     getSessionDBPath,
     getInputProjectDir,
+    sweepStaleHookMarkers,
   } = await import("./session-helpers.mjs");
   const { createSessionLoaders, attributeAndInsertEvents } = await import("./session-loaders.mjs");
   const { dirname, resolve, basename } = await import("node:path");
@@ -30,6 +31,10 @@ await runHook(async () => {
   // when Claude Code invokes hooks from a different working directory.
   const HOOK_DIR = dirname(fileURLToPath(import.meta.url));
   const { loadSessionDB, loadExtract, loadProjectAttribution } = createSessionLoaders(HOOK_DIR);
+
+  // Fire-and-forget housekeeping for markers no PostToolUse will consume
+  // (denied calls, crashes between the two hooks). Age-bounded, best-effort.
+  try { sweepStaleHookMarkers(); } catch { /* never block a hook */ }
 
   try {
     const raw = await readStdin();

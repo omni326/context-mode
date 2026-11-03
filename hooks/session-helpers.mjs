@@ -19,7 +19,7 @@
  */
 
 import { join, dirname } from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -416,6 +416,30 @@ export function getSessionDBPath(opts = CLAUDE_OPTS, projectDirOverride) {
  */
 export function getSessionEventsPath(opts = CLAUDE_OPTS, projectDirOverride) {
   return _resolveProjectFile(opts, projectDirOverride, "-events.md");
+}
+
+/**
+ * Remove cross-hook marker files that no PostToolUse will ever consume.
+ *
+ * PreToolUse writes context-mode-latency-<sid>-<tool>.txt per call and
+ * context-mode-rejected-<sid>.txt per deny/modify; PostToolUse is the only
+ * consumer, so denied calls, crashes between the two hooks, and subagent tools
+ * leave markers behind forever. Age-bounded and limited to these two prefixes:
+ * other context-mode-* files (cache/heal/redirect/retrieval) have their own
+ * contracts elsewhere.
+ */
+export function sweepStaleHookMarkers(maxAgeMs = 24 * 60 * 60 * 1000) {
+  try {
+    const dir = tmpdir();
+    const prefixes = ["context-mode-latency-", "context-mode-rejected-"];
+    const now = Date.now();
+    for (const name of readdirSync(dir)) {
+      if (!prefixes.some(p => name.startsWith(p))) continue;
+      try {
+        if (now - statSync(join(dir, name)).mtimeMs > maxAgeMs) unlinkSync(join(dir, name));
+      } catch { /* raced or vanished */ }
+    }
+  } catch { /* never block a hook */ }
 }
 
 /**

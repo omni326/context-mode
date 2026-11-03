@@ -5,7 +5,7 @@
  * Each adaptor imports these instead of duplicating the logic.
  */
 
-import { writeFileSync } from "node:fs";
+import { writeFileSync, renameSync } from "node:fs";
 
 // ── Leg-boundary helpers (#780) ──
 // The current Claude Code session_id persists across `--continue` legs, so the
@@ -267,7 +267,11 @@ export function writeSessionEventsFile(events, eventsPath) {
     lines.push("");
   }
 
-  writeFileSync(eventsPath, lines.join("\n"), "utf-8");
+  // tmp + rename: the MCP server consumes this file on the next getStore() and
+  // deletes it, so a reader must never see a half-written snapshot.
+  const tmpPath = eventsPath + ".tmp-" + process.pid;
+  writeFileSync(tmpPath, lines.join("\n"), "utf-8");
+  renameSync(tmpPath, eventsPath);
   return { grouped, lastPrompt, fileNames };
 }
 

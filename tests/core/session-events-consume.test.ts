@@ -70,4 +70,21 @@ describe("session-events auto-consume scope", () => {
     expect(() => maybeIndexSessionEvents(store)).not.toThrow();
     expect(existsSync(join(sessionsDir, `${hashProjectDirCanonical(projectDir)}-events.md`))).toBe(false);
   });
+
+  test("a failed index puts the file back instead of destroying it", () => {
+    // The consume claims the file by renaming before indexing, so a second
+    // server cannot index-then-unlink the same bytes. If indexing then fails,
+    // the claim must be released — otherwise the events are simply gone.
+    const own = join(sessionsDir, `${hashProjectDirCanonical(projectDir)}-events.md`);
+    writeFileSync(own, "# retry\nCHARLIE_RETRY_EVENT\n");
+    const dead = new ContentStore(join(root, "dead.db"));
+    dead.close();
+    maybeIndexSessionEvents(dead);
+    expect(existsSync(own)).toBe(true);
+    expect(readFileSync(own, "utf8")).toContain("CHARLIE_RETRY_EVENT");
+
+    // and it is still consumable by a live store afterwards
+    maybeIndexSessionEvents(store);
+    expect(store.search("CHARLIE_RETRY_EVENT", 3).some((h) => h.source === "session-events")).toBe(true);
+  });
 });
