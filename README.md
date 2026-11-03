@@ -1265,6 +1265,10 @@ Search runs two parallel strategies and merges them with **Reciprocal Rank Fusio
 
 RRF merges both ranked lists into a single result set, so a document that ranks well in both strategies surfaces higher than one that ranks well in only one. This replaces the old cascading fallback approach where trigram results were only used if porter returned nothing.
 
+### Auto-Captured Session Events Rank Lower
+
+Hooks auto-capture session events (decisions, errors, plans, tool failures) into the same FTS5 index as deliberate `ctx_*` output. Those rows are tagged `auto-capture` in a `source_category` column and their BM25 score is scaled by **0.4** in the ordering clause of every search statement, so at equal match quality indexed docs and batch output surface first. The scaling is uniform, so passing an explicit `source` filter to `ctx_search` still reaches the events unchanged.
+
 ### Proximity Reranking
 
 Multi-term queries get an additional reranking pass. Results where query terms appear close together are boosted — `"session continuity"` ranks passages with adjacent terms higher than pages where "session" and "continuity" appear paragraphs apart.
@@ -1623,6 +1627,14 @@ Commands chained with `&&`, `;`, or `|` are split — each part is checked separ
 
 **deny** always wins over **allow**. More specific (project-level) rules override global ones.
 
+### Credential redaction at the storage boundary
+
+Everything written to the content store - `ctx_index` output, `ctx_execute` and `ctx_batch_execute` stdout, indexed files, auto-captured session events - passes one chokepoint where credential shapes are replaced with explicit markers: `[REDACTED:private-key]`, `[REDACTED:aws-key]`, `[REDACTED:github-token]`, `[REDACTED:stripe-key]`, `[REDACTED:slack-token]`, `[REDACTED:google-key]`, `[REDACTED:llm-key]`, `[REDACTED:jwt]`.
+
+Generic pairs like `api_key: ...` or `password = ...` drop only the value, so the line stays readable and it is still clear which credential is missing. Redaction is idempotent (markers never re-match), and file staleness hashes are computed over the raw bytes, so a secret-bearing file is not permanently flagged stale.
+
+Stored chunks can be replayed into the model later through `ctx_search`, which is why the stripping happens at the write boundary rather than at every call site. This is a regex-level leak dam, not a completeness guarantee. Redaction is explicit and never silent.
+
 ### Project-boundary containment
 
 `ctx_execute_file` is confined to the project root. A `path` that resolves **outside** the workspace — an absolute path like `/home/user/secrets`, a `../../` traversal, or a project-local symlink whose target escapes the project — is refused with a `File access blocked` error. This closes the [#852](https://github.com/mksglu/context-mode/issues/852) escape vector where an agent, denied an out-of-project read by the host sandbox, retried through the MCP sandbox (the host's MCP approval prompt cannot inspect the tool's input params, so the escape was invisible to the approver).
@@ -1670,6 +1682,7 @@ That blocks loopback + RFC1918 + ULA in addition to the always-blocked ranges. U
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `CONTEXT_MODE_BASH_REROUTE` | unset (off) | Replaces the advisory Bash nudge with a hard reroute: an unbounded command (one the structurally-bounded allowlist cannot bound) is rewritten before execution into an explicit instruction to run it through `ctx_batch_execute`, so its output never enters the context window. Structurally-bounded commands such as `git status` are untouched, and when no context-mode MCP tools are visible the call falls back to the nudge. The replacement text is byte-deterministic (no timestamps), so the KV-cache prefix stays stable. Off by default: a reroute replaces the command, which is a behaviour change for every user until the recall test passes. |
 | `CONTEXT_MODE_EXTERNAL_MCP_NUDGE_EVERY` | `10` | Cadence (in tool calls) at which the PreToolUse hook re-injects the "wrap large external-MCP payloads in `ctx_execute`" guidance. The original implementation ([#529](https://github.com/mksglu/context-mode/pull/529)) fired only once per session, which got lost after context compaction in MCP-heavy sessions (e.g. 50+ Jira/Slack/Notion calls — see [#567](https://github.com/mksglu/context-mode/issues/567) follow-up). The default re-fires every 10th matching call, keeping the guidance in the model's recent window. Range `[1, 100]`; invalid values fall back to `10`. Set to `1` for "every call" (most aggressive — adds ~250 tokens/call) or to a larger value for less frequent reminders. |
 
 ## Contributing
