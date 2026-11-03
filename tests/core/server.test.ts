@@ -46,6 +46,7 @@ import {
 import { ROUTING_BLOCK } from "../../hooks/routing-block.mjs";
 import { sanitizeSchemaForStrictClients, resolveExecTimeout, AGY_DEFAULT_EXEC_TIMEOUT_MS, REGISTERED_CTX_TOOLS } from "../../src/server.js";
 import { stripJsonComments, parseJsonc } from "../../src/util/jsonc.js";
+import { foreignWorkspaceEnv, foreignIdentificationEnv } from "../../src/adapters/detect.js";
 
 // ─── Shared setup ───────────────────────────────────────────────────────────
 const runtimes = detectRuntimes();
@@ -1249,15 +1250,19 @@ describe("ctx_index: projectRoot path resolution (#365)", () => {
     // env carries only IDEA_INITIAL_DIRECTORY pointing at the real project.
     const fakeIdeBin = mkdtempSync(join(tmpdir(), "ctx-jetbrains-bin-"));
 
-    // Strip inherited platform workspace/identification vars so the cascade is
-    // forced to consult IDEA_INITIAL_DIRECTORY. Issue #545 (v1.0.124): when a
-    // host env var (Claude Code, Codex, etc.) leaks into this child,
-    // detectPlatform() can pick that host, enter strict mode, and ban
-    // IDEA_INITIAL_DIRECTORY as a foreign var.
+    // Strip inherited platform vars so the cascade is forced to consult
+    // IDEA_INITIAL_DIRECTORY. Issue #545 (v1.0.124): when a host env var leaks
+    // into this child, detectPlatform() picks that host, enters strict mode and
+    // bans IDEA_INITIAL_DIRECTORY as a foreign var. The scrub list comes from
+    // the detector's own registry rather than a hand-copied prefix regex — the
+    // copy leaked bare markers (`OPENCODE=1` has no underscore), so on an
+    // OpenCode host the child detected opencode and resolved against cwd.
+    // Deriving it from the registry keeps this hermetic as the registry grows.
     const cleanEnv = { ...process.env };
     for (const key of Object.keys(cleanEnv)) {
       if (
-        /^(CLAUDE|CODEX|GEMINI|VSCODE|CURSOR|OPENCODE|KILO|KIRO|PI|OMP|ZED|QWEN|KIMI|ANTIGRAVITY|OPENCLAW|COPILOT)_/.test(key) ||
+        foreignWorkspaceEnv("jetbrains-copilot").has(key) ||
+        foreignIdentificationEnv("jetbrains-copilot").has(key) ||
         key === "CONTEXT_MODE_PLATFORM" ||
         key === "CONTEXT_MODE_PROJECT_DIR"
       ) {

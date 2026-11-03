@@ -1866,6 +1866,21 @@ function formatDuration(uptimeMin: string): string {
  * a BCP 47 tag the host actually has data for". Construction is an explicit
  * sanity check; both must pass.
  */
+/**
+ * Host-reported locale strings carry suffixes that `Intl` rejects outright:
+ * macOS `AppleLocale` can be `zh_CN@rg=hkzzzz` (a region override), and
+ * `Intl.DateTimeFormat` throws `Invalid language tag` on anything with `@`.
+ * Rejecting the whole tag silently discarded an otherwise valid language +
+ * region and fell back to `LANG`. The extension is a formatting nuance, not
+ * the language, so drop it and keep `zh-CN`. Applied to the
+ * `CONTEXT_MODE_LOCALE` override too — a user who pastes
+ * `defaults read -g AppleLocale` output means that locale, and rejecting it
+ * would silently ignore their explicit choice.
+ */
+function normalizeHostLocale(raw: string): string {
+  return raw.split("@")[0].trim().replace(/_/g, "-");
+}
+
 function isUsableBcp47Locale(raw: string): boolean {
   if (!raw) return false;
   try {
@@ -1880,7 +1895,7 @@ function isUsableBcp47Locale(raw: string): boolean {
 
 export function detectLocaleAndTz(): { locale: string; tz: string } {
   const env = (process.env ?? {}) as Record<string, string | undefined>;
-  let locale = env.CONTEXT_MODE_LOCALE ?? "";
+  let locale = normalizeHostLocale(env.CONTEXT_MODE_LOCALE ?? "");
   if (locale && !isUsableBcp47Locale(locale)) locale = "";
   if (!locale) {
     if (process.platform === "darwin") {
@@ -1892,13 +1907,13 @@ export function detectLocaleAndTz(): { locale: string; tz: string } {
           encoding: "utf8",
           timeout: 500,
         }).trim();
-        if (out) locale = out.replace(/_/g, "-");
+        if (out) locale = normalizeHostLocale(out);
       } catch { /* defaults missing or sandbox */ }
       if (locale && !isUsableBcp47Locale(locale)) locale = "";
     }
     if (!locale && (env.LC_TIME || env.LANG)) {
       const raw = (env.LC_TIME || env.LANG || "").split(".")[0];
-      if (raw) locale = raw.replace(/_/g, "-");
+      if (raw) locale = normalizeHostLocale(raw);
       // POSIX locale identifiers (`C`, `POSIX`) survive the simple extraction
       // above but blow up `new Intl.DateTimeFormat(locale, ...)`. Drop and
       // fall through to the host-default branch below.

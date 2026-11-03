@@ -15,6 +15,22 @@ describe("detectLocaleAndTz", () => {
     }
   });
 
+  // Machine-independent cover for the same rule: `@…` is a POSIX/unicode
+  // extension, not part of the language tag, and `Intl` throws on it. Asserted
+  // through the override so it runs on every platform (the AppleLocale branch
+  // above can only be exercised on the host whose locale happens to carry one).
+  it("drops the @-extension instead of discarding the whole locale", () => {
+    const orig = process.env.CONTEXT_MODE_LOCALE;
+    process.env.CONTEXT_MODE_LOCALE = "zh_CN@rg=hkzzzz";
+    try {
+      const { locale } = detectLocaleAndTz();
+      expect(locale).toBe("zh-CN");
+    } finally {
+      if (orig === undefined) delete process.env.CONTEXT_MODE_LOCALE;
+      else process.env.CONTEXT_MODE_LOCALE = orig;
+    }
+  });
+
   // Regression: `require("node:child_process")` inline threw "Dynamic require
   // not supported" under esbuild's ESM shim, silently falling through to the
   // LANG fallback. This test reads the macOS AppleLocale itself and asserts
@@ -25,9 +41,12 @@ describe("detectLocaleAndTz", () => {
 
     let appleLocale: string;
     try {
+      // Same normalization the detector applies: `_`→`-` and the `@…`
+      // unicode-extension suffix (a macOS region override such as
+      // `zh_CN@rg=hkzzzz`) which `Intl` rejects as an invalid language tag.
       appleLocale = execFileSync("defaults", ["read", "-g", "AppleLocale"], {
         encoding: "utf8", timeout: 500,
-      }).trim().replace(/_/g, "-");
+      }).trim().split("@")[0].replace(/_/g, "-");
     } catch {
       return; // sandbox without `defaults` — nothing to assert against
     }
