@@ -44,3 +44,5 @@ context-mode-guidance-*/
 tools/pricing/litellm-catalog.json
 /.cocoindex_code/
 /.kilo/
+# Serena's per-project state (created when a Serena session activates this repo).
+.serena/
