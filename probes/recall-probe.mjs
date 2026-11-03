@@ -14,32 +14,51 @@
  * which is what `isRecoverable()` in history-pruner.ts is the whitelist for.
  *
  * HOW TO RUN
- *   PROBE_DB=~/.context-mode/projects/<project-hash>/context.db PROBE_FACTS=20 \
- *     node probes/recall-probe.mjs
- * `PROBE_DB` defaults to the busiest project store on this machine. Output is one
- * JSON object: sources replayed, bytes, facts sampled, recovered, recall, misses,
- * plus escape-bearing chunks (ANSI) reported separately so a colour-code effect is
- * never confused with a chunk-boundary artifact.
+ *   npm run build          # probes import from build/, which is gitignored
+ *   node probes/recall-probe.mjs                 # biggest store in ~/.context-mode
+ *   PROBE_DB=<path>/context.db PROBE_FACTS=20 node probes/recall-probe.mjs
+ * Output is one JSON object: sources replayed, bytes, facts sampled, recovered,
+ * recall, misses. It is INDEX-SIDE recall only: every query is copied verbatim
+ * from an indexed line, so it answers "can FTS5 find a string we know is there",
+ * not "will a paraphrased follow-up find it" and not "will the model call
+ * ctx_search at all" — those need the behavioural test, not this probe.
  *
- * RESULT (2026-11-04, opencode v2.2.5, context-mode fork @ 44c6df1f)
- *   98 sources / 1.33 MB replayed, 327 fact queries, 327 recovered → recall 1.000
- *   (gate was ≥0.95). The 3 initial ANSI "misses" were probe artifacts: the phrases
- *   were built from escape-stripped text and spanned chunk/source boundaries, so
- *   they were never contiguous visible text. A dedicated adjacency A/B over the 4
- *   escape-bearing sources (4/4 recovered with escapes indexed vs 4/4 without)
- *   showed indexing escapes verbatim costs nothing measurable — that is why there
- *   is no ANSI stripping at the index chokepoint.
+ * RESULT (2026-11-04, opencode v2.2.5, fork @ 44c6df1f, busiest local store)
+ *   98 sources / 1.48 MB replayed, 321 fact queries, 321 recovered → recall 1.000
+ *   (gate was ≥0.95). Numbers belong to that corpus; rerun on other data and
+ *   expect different totals.
+ *   The 3 initial ANSI "misses" were probe artifacts: phrases assembled from
+ *   escape-stripped text that were never contiguous visible text (they spanned
+ *   chunk/source boundaries). An adjacency A/B over the 4 escape-bearing sources
+ *   recovered 4/4 with escapes indexed and 4/4 without, so nothing is stripped at
+ *   index time. Sampling now skips escape-bearing lines outright (finding #7).
+ *   Redaction is a real hole this probe cannot see: a line indexed as
+ *   `password=[REDACTED]` can never be found by the value it used to carry.
  */
 import { DatabaseSync } from "node:sqlite";
+import { readdirSync, statSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { ContentStore } from "../build/store.js";
 
-const REAL =
-  process.env.PROBE_DB ||
-  join(process.env.HOME, ".context-mode/projects/88d413faf427e440/context.db");
+// Biggest capture store on the machine — the one with the most real logs.
+function biggestStore() {
+  const root = join(homedir(), ".context-mode/projects");
+  const dirs = readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory());
+  let best = null;
+  for (const d of dirs) {
+    const p = join(root, d.name, "context.db");
+    try {
+      const size = statSync(p).size;
+      if (!best || size > best.size) best = { p, size };
+    } catch {}
+  }
+  if (!best) throw new Error(`no context.db under ${root}; set PROBE_DB=<path>`);
+  return best.p;
+}
+
+const REAL = process.env.PROBE_DB || biggestStore();
 const FACTS = Number(process.env.PROBE_FACTS || 20);
-const strip = (s) => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
 
 function sampleFacts(text, n) {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -49,7 +68,10 @@ function sampleFacts(text, n) {
   for (let i = 0; i < lines.length && facts.length < n; i += step) {
     const l = lines[i];
     if (l.length < 24 || l.length > 400) continue;
-    const words = strip(l).split(/\s+/).filter((w) => /[A-Za-z0-9_./-]{5,}/.test(w));
+    // Escapes are indexed verbatim; a phrase built from their stripped form may
+    // not be contiguous in the index, which would be a probe artifact, not a miss.
+    if (l.includes("\x1b")) continue;
+    const words = l.split(/\s+/).filter((w) => /[A-Za-z0-9_./-]{5,}/.test(w));
     if (words.length < 4) continue;
     const q = words.slice(0, 5).join(" ");
     if (seen.has(q)) continue;
@@ -77,7 +99,8 @@ const sources = real
       .all(...ansiIds),
   );
 
-const fresh = new ContentStore(join(tmpdir(), `recall-probe-${Date.now()}.db`));
+const probeDb = join(tmpdir(), `recall-probe-${Date.now()}.db`);
+const fresh = new ContentStore(probeDb);
 const perSource = new Map();
 for (const s of sources) {
   const rows = real.prepare("select rowid as id from chunks where source_id = ? order by ord").all(s.id);
@@ -94,6 +117,8 @@ for (const [label, text] of perSource) {
   for (const q of sampleFacts(text, FACTS)) {
     total++;
     const src = `batch:${label}`;
+    // store.search is the strict porter path; ctx_search uses searchWithFallback
+    // (trigram + OR fallbacks), so this probe measures a floor, not the shipped path.
     const inTop = fresh.search(q, 5).some((h) => h.source === src);
     const exact = fresh.search(q, 5, src, "AND", undefined, "exact").length > 0;
     if (inTop || exact) found++;
@@ -116,3 +141,6 @@ console.log(
     2,
   ),
 );
+
+fresh.close();
+for (const suffix of ["", "-wal", "-shm"]) rmSync(probeDb + suffix, { force: true });
