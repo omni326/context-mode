@@ -1734,6 +1734,9 @@ describe("Temp Cleanup Resilience", () => {
       assert.equal(r.exitCode, 0, `Execution ${i} failed with stderr: ${r.stderr}`);
       assert.ok(r.stdout.includes(`ok-${i}`), `Missing output for execution ${i}`);
     }
+    // Sandboxed code runs with cwd = the caller's cwd (by design, so it can reach
+    // project files), so these land in the repo root; nothing else removes them.
+    for (let j = 0; j < 3; j++) rmSync(join(process.cwd(), `f${j}.tmp`), { force: true });
   });
 
   test("node runtime accessible from executor shell", async () => {
