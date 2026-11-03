@@ -97,6 +97,12 @@ function getExternalMcpNudgeEvery() {
 const BASH_NUDGE_MIN_BYTES_ENV = "CONTEXT_MODE_BASH_NUDGE_MIN_COMMAND_BYTES";
 const BASH_NUDGE_MIN_BYTES_MAX = 100_000;
 
+// Hard reroute of unbounded Bash (opt-in). Off by default: the nudge is advisory
+// and keeps the command running natively, while a reroute replaces it — that is a
+// behaviour change for every user until the recall test (plan.md item 12) passes.
+// `=1` replaces the generic nudge with an explicit redirect to ctx_batch_execute.
+const BASH_REROUTE_ENV = "CONTEXT_MODE_BASH_REROUTE";
+
 function getBashNudgeMinCommandBytes() {
   const raw = process.env[BASH_NUDGE_MIN_BYTES_ENV];
   if (raw == null || raw === "") return 0;
@@ -834,6 +840,29 @@ export function routePreToolUse(toolName, toolInput, projectDir, platform, sessi
     const minCommandBytes = getBashNudgeMinCommandBytes();
     if (minCommandBytes > 0 && Buffer.byteLength(command, "utf8") < minCommandBytes) {
       return null;
+    }
+
+    // Opt-in hard reroute (CONTEXT_MODE_BASH_REROUTE=1): replace the command with
+    // an explicit instruction to run it through ctx_batch_execute, which executes
+    // it in the sandbox, indexes the full output, and returns only the sections
+    // asked for. Byte-deterministic payload (no timestamps) so the KV-cache prefix
+    // stays stable; explicit and never silent, same convention as the curl/build
+    // redirects above. Falls back to the nudge when MCP tools are not available.
+    if (process.env[BASH_REROUTE_ENV] === "1") {
+      const safeCmd = command.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      const rerouted = mcpRedirect({
+        action: "modify",
+        updatedInput: {
+          command: `echo "context-mode: unbounded command rerouted. Run ${t("ctx_batch_execute")}({commands:[{label: \\"result\\", command: \\"${safeCmd} 2>&1\\"}], queries:[\\"<what you need from the output>\\"]}) — the command executes in the sandbox, its full output is indexed, and only the sections you query enter your conversation. Recover anything missed later with ${t("ctx_search")}(queries: [...]). If you truly need the raw bytes, use ${t("ctx_execute_file")} instead of re-running this command."`,
+        },
+        redirectMeta: {
+          tool: "Bash",
+          type: "bash-redirected",
+          bytesAvoided: 8192,
+          commandSummary: command.slice(0, 200),
+        },
+      }, mcpToolsAvailable);
+      if (rerouted) return rerouted;
     }
 
     // allow all other Bash commands, but inject routing nudge (once per session)
