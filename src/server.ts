@@ -3741,8 +3741,9 @@ EXAMPLE: ctx_batch_execute(
         .min(1)
         .describe(
           "Search queries to extract information from indexed output. Use 5-8 comprehensive queries. " +
-          "Each returns top 5 matching sections with full content. " +
-          "This is your ONLY chance — put ALL your questions here. No follow-up calls needed.",
+          "Each returns the top 3 matching sections as ~3KB windows around the match — not full section " +
+          "content; the rest stays in storage for ctx_search. " +
+          "Batch ALL your questions here; only follow up with ctx_search if a section looks truncated.",
         )),
       timeout: z
         .coerce.number()
