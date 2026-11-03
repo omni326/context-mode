@@ -1,8 +1,14 @@
 # Fork-local install patches
 
-This document is specific to **this fork deployment** and is intentionally kept
-out of `README.md` — the README stays identical to upstream so it can be PR'd
-without carrying fork-specific URLs or machine paths.
+This document is specific to **this fork deployment** and is kept out of
+`README.md` to leave upstream-only prose PR-able where that is still useful.
+Since **2.0.0-omni.1 the fork is its own project**: the OpenCode 2 plugin entry, the
+source-capture/reroute path, the virtual pruner and the storage-durability fixes
+are fork-only, and upstream parity is no longer a goal. README therefore carries
+fork behaviour; the parts still naming `mksglu/context-mode` (badges, install
+snippets) are cosmetic drift, not a contract — nothing functional reads them
+(`upgrade-source.ts` pins the fork repo, `isForkSource()` keeps npm registry
+version checks off).
 
 The OpenCode 2 plugin support itself (`src/adapters/opencode/plugin-v2.ts`,
 subpath export `./plugin-v2`) is clean generic code — see the
