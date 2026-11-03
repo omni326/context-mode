@@ -202,23 +202,9 @@ export function cleanupStaleDBs(): number {
 }
 
 /**
- * Check if a PID is still alive (not a zombie holding a WAL lock).
- * Returns true if the process exists, false if it's dead.
- */
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Clean up stale per-project content store DBs older than maxAgeDays.
- * Scans the given directory for *.db files and checks mtime.
- * Also detects zombie processes holding WAL locks — if a WAL file exists
- * but the owning PID is dead, the DB files are cleaned up regardless of age.
+ * Scans the given directory for *.db files and checks mtime. Age is the only
+ * criterion: there is no owner/liveness check (see the shortcut note below).
  */
 export function cleanupStaleContentDBs(contentDir: string, maxAgeDays: number): number {
   let cleaned = 0;
@@ -236,6 +222,11 @@ export function cleanupStaleContentDBs(contentDir: string, maxAgeDays: number): 
         // another project's server startup could wipe a live knowledge base.
         // SQLite recovers a stray WAL on the next open by itself — nothing here
         // needs to help a dead process.
+        // shortcut: no owner/liveness check — opening a project whose DB has not been
+        // written in >14 days unlinks the file this process has open, so that session's
+        // writes land in a detached inode (ctx_search works in-session, gone after
+        // exit). Accepted 2026-11-04; upgrade = record the owner pid at open time and
+        // skip it here when process.kill(pid, 0) says that process is still running.
         if (mtime < cutoff) {
           for (const suffix of ["", "-wal", "-shm"]) {
             try { unlinkSync(filePath + suffix); } catch { /* ignore */ }
@@ -963,7 +954,11 @@ export class ContentStore {
     maxChunkBytes: number = MAX_CHUNK_BYTES,
   ): IndexResult {
     if (!content || content.trim().length === 0) {
-      return this.#insertChunks([], source, "", undefined, undefined, attribution);
+      // Same retry as every other write path (index() and indexJSON() wrap
+      // #insertChunks in withRetry): a concurrent writer can return SQLITE_BUSY on
+      // this branch too, and it used to surface as an index error for the one input
+      // that is easiest to handle — an empty one.
+      return withRetry(() => this.#insertChunks([], source, "", undefined, undefined, attribution));
     }
 
     const chunks = this.#chunkPlainText(content, linesPerChunk, maxChunkBytes);
@@ -1050,7 +1045,25 @@ export class ContentStore {
     // Atomic dedup + insert: delete previous source with same label,
     // then insert new content — all within a single transaction.
     // Prevents stale results in iterative workflows. (See: GitHub issue #67)
+    let vocabInserted = 0;
     const transaction = this.#db.transaction(() => {
+      // Vocabulary is one unit of work with the index write: a process killed
+      // between the two left content searchable but under-weighted in ranking,
+      // and nothing ever re-ran the extraction. It is written inline because a
+      // nested transaction is impossible here — node:sqlite's better-sqlite3 shim
+      // (db-base.ts:165) issues a bare BEGIN, which fails inside a transaction.
+      if (text) {
+        const unique = [
+          ...new Set(
+            text
+              .toLowerCase()
+              .split(/[^\p{L}\p{N}_-]+/u)
+              .filter((w) => w.length >= 3 && !STOPWORDS.has(w)),
+          ),
+        ];
+        for (const word of unique) vocabInserted += this.#stmtInsertVocab.run(word).changes;
+      }
+
       this.#stmtDeleteChunksByLabel.run(label);
       this.#stmtDeleteChunksTrigramByLabel.run(label);
       this.#stmtDeleteSourcesByLabel.run(label);
@@ -1074,7 +1087,10 @@ export class ContentStore {
     });
 
     const sourceId = transaction();
-    if (text) this.#extractAndStoreVocabulary(text);
+    // Cache invalidation stays outside the transaction (process-local state), but
+    // still only when new words actually landed — INSERT OR IGNORE reports
+    // changes=0 for duplicates, so re-indexing identical content does not thrash.
+    if (vocabInserted > 0) this.#fuzzyCache.clear();
 
     // Periodically optimize FTS5 indexes to merge b-tree segments.
     // Fragmentation accumulates over insert/delete cycles (dedup re-indexes
@@ -1619,30 +1635,6 @@ export class ContentStore {
   close(): void {
     this.#optimizeFTS(); // defragment before close
     closeDB(this.#db); // WAL checkpoint before close — important for persistent DBs
-  }
-
-  // ── Vocabulary Extraction ──
-
-  #extractAndStoreVocabulary(content: string): void {
-    const words = content
-      .toLowerCase()
-      .split(/[^\p{L}\p{N}_-]+/u)
-      .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
-
-    const unique = [...new Set(words)];
-
-    let inserted = 0;
-    this.#db.transaction(() => {
-      for (const word of unique) {
-        const info = this.#stmtInsertVocab.run(word);
-        inserted += info.changes;
-      }
-    })();
-
-    // Invalidate fuzzy cache when new vocab words actually land. INSERT OR
-    // IGNORE reports changes=0 for duplicates, so re-indexing identical
-    // content does not thrash the cache during iterative workflows.
-    if (inserted > 0) this.#fuzzyCache.clear();
   }
 
   // ── Chunking ──

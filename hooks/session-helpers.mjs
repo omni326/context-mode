@@ -19,7 +19,7 @@
  */
 
 import { join, dirname } from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync, renameSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -431,12 +431,27 @@ export function getSessionEventsPath(opts = CLAUDE_OPTS, projectDirOverride) {
 export function sweepStaleHookMarkers(maxAgeMs = 24 * 60 * 60 * 1000) {
   try {
     const dir = tmpdir();
-    const prefixes = ["context-mode-latency-", "context-mode-rejected-"];
+    // Every cross-hook marker family, not just the two that started it: a denied or
+    // interrupted call leaves its redirect marker behind, an unconsumed retrieval
+    // marker and a per-session guidance dir have no other consumer either. On this
+    // machine that was 140 retrieval markers + 19 guidance dirs and climbing.
+    const prefixes = [
+      "context-mode-latency-",
+      "context-mode-rejected-",
+      "context-mode-redirect-",
+      "context-mode-retrieval-",
+      "context-mode-guidance-",
+    ];
     const now = Date.now();
     for (const name of readdirSync(dir)) {
       if (!prefixes.some(p => name.startsWith(p))) continue;
       try {
-        if (now - statSync(join(dir, name)).mtimeMs > maxAgeMs) unlinkSync(join(dir, name));
+        const full = join(dir, name);
+        if (now - statSync(full).mtimeMs <= maxAgeMs) continue;
+        // guidance markers live in a per-session directory (routing.mjs:122), so the
+        // family is a directory tree, not a file.
+        if (name.startsWith("context-mode-guidance-")) rmSync(full, { recursive: true, force: true });
+        else unlinkSync(full);
       } catch { /* raced or vanished */ }
     }
   } catch { /* never block a hook */ }

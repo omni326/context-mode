@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, mkdtempSync, rmSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import {
   PolyglotExecutor,
   rewriteWindowsBuildTools,
+  cleanupStaleSandboxDirs,
+  OS_TMPDIR,
 } from "../../src/executor.js";
 import { detectRuntimes } from "../../src/runtime.js";
 
@@ -135,27 +137,40 @@ describe.runIf(runtimes.python)(
 );
 
 describe("#788(b) — sandbox temp dir is cleaned up after run", () => {
-  it("leaves no .ctx-mode-* dir behind after a completed non-shell run", async () => {
+  it("removes the exact dir the run used", async () => {
     const executor = new PolyglotExecutor({ runtimes });
-    const tmpRoot = process.platform === "win32"
-      ? (process.env.TEMP ?? process.env.TMP ?? tmpdir())
-      : tmpdir();
-
-    const before = new Set(
-      existsSync(tmpRoot)
-        ? readdirSync(tmpRoot).filter((n) => n.startsWith(".ctx-mode-"))
-        : [],
-    );
-
     const lang = runtimes.python ? "python" : "shell";
     const code = lang === "python" ? "print('hi')" : "echo hi";
     const result = await executor.execute({ language: lang, code });
     expect(result.exitCode).toBe(0);
 
-    const after = existsSync(tmpRoot)
-      ? readdirSync(tmpRoot).filter((n) => n.startsWith(".ctx-mode-"))
-      : [];
-    const leaked = after.filter((n) => !before.has(n));
-    expect(leaked).toEqual([]);
+    // The old version diffed the whole tmpdir for `.ctx-mode-*` names, which two
+    // things broke: other tests running the executor concurrently appeared as
+    // leaks (flaky red on a full suite), and the executor resolves its own temp
+    // root — on macOS `getconf DARWIN_USER_TEMP_DIR` with TMPDIR deliberately
+    // stripped (executor.ts:99), not `tmpdir()` — so a mismatch made the test
+    // blind and permanently green.
+    expect(result.tmpDir, "execute() must report the dir it used").toBeTruthy();
+    expect(existsSync(result.tmpDir!)).toBe(false);
+  });
+
+  it("cleanupStaleSandboxDirs reaps aged dirs and spares young ones", () => {
+    // The #788 case in the wild: cleanupTmpDir fails on a lingering handle and the
+    // catch is silent, so nothing else ever removed them — 52 `.ctx-mode-*` dirs had
+    // piled up in one machine's /var/folders, which macOS never reclaims.
+    const stale = mkdtempSync(join(OS_TMPDIR, ".ctx-mode-"));
+    const fresh = mkdtempSync(join(OS_TMPDIR, ".ctx-mode-"));
+    writeFileSync(join(stale, "out.txt"), "x", "utf-8");
+    const old = Date.now() / 1000 - 8 * 86400;
+    utimesSync(stale, old, old);
+
+    try {
+      expect(cleanupStaleSandboxDirs()).toBeGreaterThanOrEqual(1);
+      expect(existsSync(stale)).toBe(false);
+      expect(existsSync(fresh)).toBe(true); // a backgrounded run may still be writing
+    } finally {
+      rmSync(stale, { recursive: true, force: true });
+      rmSync(fresh, { recursive: true, force: true });
+    }
   });
 });

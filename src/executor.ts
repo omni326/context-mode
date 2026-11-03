@@ -1,5 +1,5 @@
 import { spawn, execSync, execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -96,7 +96,7 @@ export function buildPowerShellScriptContent(code: string): string {
  * os.tmpdir() reads TMPDIR from the environment, which some shells/tools
  * set to the project root — causing temp files to pollute the working tree.
  */
-const OS_TMPDIR = (() => {
+export const OS_TMPDIR = (() => {
   if (isWin) return process.env.TEMP ?? process.env.TMP ?? tmpdir();
   try {
     const result = execFileSync(
@@ -191,6 +191,35 @@ function cleanupTmpDir(tmpDir: string): void {
   } catch {
     /* best-effort — OS will reclaim %TEMP% eventually */
   }
+}
+
+/**
+ * Remove sandbox temp dirs left behind when cleanupTmpDir failed — a lingering
+ * handle on Windows is exactly the #788 case, and macOS never reclaims
+ * /var/folders on its own. Age-bounded on purpose: a backgrounded run keeps its
+ * dir while it is still writing, so only long-dead dirs go. Nothing else swept
+ * these (52 of them had piled up on one machine).
+ */
+export function cleanupStaleSandboxDirs(maxAgeMs: number = 7 * 24 * 60 * 60 * 1000): number {
+  let cleaned = 0;
+  try {
+    const now = Date.now();
+    for (const name of readdirSync(OS_TMPDIR)) {
+      if (!name.startsWith(".ctx-mode-")) continue;
+      const full = join(OS_TMPDIR, name);
+      try {
+        if (now - statSync(full).mtimeMs <= maxAgeMs) continue;
+        rmSync(full, {
+          recursive: true,
+          force: true,
+          maxRetries: isWin ? 8 : 2,
+          retryDelay: 100,
+        });
+        cleaned++;
+      } catch { /* raced or vanished */ }
+    }
+  } catch { /* best-effort — never blocks startup */ }
+  return cleaned;
 }
 
 /** Kill process tree — on Windows uses taskkill /T; on Unix kills the process group. */
@@ -289,7 +318,9 @@ export class PolyglotExecutor {
 
       // Rust: compile then run
       if (cmd[0] === "__rust_compile_run__") {
-        return await this.#compileAndRun(filePath, tmpDir, timeout);
+        const compiled = await this.#compileAndRun(filePath, tmpDir, timeout);
+        compiled.tmpDir = tmpDir;
+        return compiled;
       }
 
       // Every language runs in the project directory so git, relative paths,
@@ -311,6 +342,7 @@ export class PolyglotExecutor {
         cleanupTmpDir(tmpDir);
       }
 
+      result.tmpDir = tmpDir;
       return result;
     } catch (err) {
       cleanupTmpDir(tmpDir);

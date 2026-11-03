@@ -10,7 +10,7 @@ import { homedir, tmpdir, cpus, platform } from "node:os";
 import { request as httpsRequest } from "node:https";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { z } from "zod";
-import { PolyglotExecutor } from "./executor.js";
+import { PolyglotExecutor, cleanupStaleSandboxDirs } from "./executor.js";
 import { runPool, type PoolJob } from "./runPool.js";
 import { ContentStore, cleanupStaleDBs, cleanupStaleContentDBs, type SearchResult, type IndexResult } from "./store.js";
 import { composeFetchCacheKey } from "./fetch-cache.js";
@@ -755,6 +755,9 @@ function getStore(): ContentStore {
 
     // Also clean old PID-based DBs from migration
     cleanupStaleDBs();
+    // Sandbox dirs whose cleanupTmpDir failed (Windows handle race, #788) had no
+    // sweeper at all — macOS never reclaims /var/folders, so they just accumulated.
+    cleanupStaleSandboxDirs();
   }
   maybeIndexSessionEvents(_store);
   return _store;

@@ -1309,6 +1309,7 @@ Indexed content persists in a per-project SQLite database at `~/.context-mode/co
 - **Cache miss (TTL expired):** Re-fetches silently. No user action needed.
 - **`ttl: 0`** or **`force: true`:** Bypasses cache and re-fetches regardless of freshness.
 - **14-day cleanup:** Content databases and sources older than 14 days are removed on startup.
+- **Temp-file cleanup:** cross-hook marker files in the OS temp directory (`latency-`, `rejected-`, `redirect-`, `retrieval-`, `guidance-`) older than 24 h are swept by the hooks, and `.ctx-mode-*` sandbox directories older than 7 days by the server on startup — a denied or interrupted call leaves its marker behind, and a lingering file handle can make sandbox cleanup fail, so both families otherwise grew forever.
 
 This means `--continue` sessions preserve indexed docs across restarts. No re-fetching, no wasted context tokens.
 

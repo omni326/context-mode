@@ -62,6 +62,12 @@ export interface ExecResult {
   timedOut: boolean;
   /** Process was detached and continues running in the background. */
   backgrounded?: boolean;
+  /**
+   * Sandbox temp dir this run used, already removed by the time the result is
+   * returned (unless backgrounded). Callers/tests need the exact path to assert
+   * cleanup instead of diffing the whole tmpdir, which other concurrent runs pollute.
+   */
+  tmpDir?: string;
 }
 
 // ─────────────────────────────────────────────────────────
