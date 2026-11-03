@@ -109,6 +109,22 @@ export default {
       });
     }
 
+    // ── phase-3 shape probe: what does a FAILED tool result look like? ──
+    // The pruner must never touch a failed result (official warning: stripping
+    // error details makes the model assume success), so the failure has to be
+    // detectable from the provider message alone. Logs every tool message in
+    // full plus the tool-call part of assistant messages.
+    if (has("shape")) {
+      await ctx.session.hook("context", async (e: any) => {
+        const msgs = Array.isArray(e.messages) ? e.messages : [];
+        for (const m of msgs) {
+          if (m?.role === "tool" || JSON.stringify(m).includes("tool-call")) {
+            log({ ev: "shape", msg: m });
+          }
+        }
+      });
+    }
+
     // ── 0.3 prune direction: erase the sentinel from the outgoing request ──
     // The sentinel lives only in the tool result (never in the prompt), so a model
     // that still answers with it is reading un-pruned history. Shell is denied in

@@ -38,6 +38,7 @@
  */
 import { Plugin } from "@opencode/plugin";
 import { createContextModePlugin } from "./plugin.js";
+import { pruneToolResults } from "./history-pruner.js";
 
 type ContentPart = { type: string; text?: string };
 
@@ -175,6 +176,29 @@ export default Plugin.define({
         if (shadow.length !== origLen) {
           event.system = toParts(shadow) as never;
         }
+      });
+      disposers.push(() => void reg.dispose());
+    }
+
+    // ── stale tool-result pruning (V2-only, opt-in) ───────────────────
+    // The `context` hook is the only place that can shrink what the model is
+    // sent without rewriting persisted history (probe 0.3 proved both halves:
+    // the rewrite reaches the model, the DB keeps the raw bytes). Consumed,
+    // large, non-failed tool results outside the keep window become explicit
+    // pointers. Default off until the recall test (plan.md item 12) passes.
+    // shortcut: prune decisions live in this process; after a restart the first
+    // request rebuilds the prefix anyway (KV-cache is cold), upgrade to a
+    // per-session file if restart-driven cache misses ever show up in cost.
+    if (process.env.CONTEXT_MODE_PRUNE_STALE === "1") {
+      let decided = new Set<string>();
+      const reg = await ctx.session.hook("context", async (event) => {
+        const msgs = event.messages as unknown[] | undefined;
+        if (!Array.isArray(msgs)) return;
+        const out = pruneToolResults(msgs, { decided });
+        if (out.pruned.length === 0) return;
+        decided = out.decided;
+        // V2 only adopts a wholesale reassignment (see file header, note 1).
+        event.messages = out.messages as never;
       });
       disposers.push(() => void reg.dispose());
     }
