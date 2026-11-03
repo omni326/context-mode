@@ -42,6 +42,7 @@ import {
   resolveContentStorageDir,
   resolveDefaultSessionDir,
   resolveSessionDbPath,
+  resolveSessionPath,
   resolveSessionStorageDir,
   resolveStatsStorageDir,
   SessionDB,
@@ -499,25 +500,30 @@ export function resolveSessionIdFromSessionDB(opts?: {
 }
 
 /**
- * Auto-index session events files written by SessionStart hook.
- * Scans ~/.claude/context-mode/sessions/ for *-events.md files.
- * CLAUDE_PROJECT_DIR is NOT available to MCP servers — only to hooks —
- * so we glob-scan instead of computing a specific hash.
- * Files are consumed (deleted) after indexing to prevent double-indexing.
- * Called on every getStore() — readdirSync is sub-millisecond when no files match.
+ * Auto-index the session events file written by the SessionStart hook.
+ * The file is per-project (`<canonicalHash><suffix>-events.md`), so we resolve
+ * exactly our own path through `resolveSessionPath` — the same resolver the
+ * hooks import, so hash/worktree-suffix/legacy-rename can never drift.
+ * CLAUDE_PROJECT_DIR is not available to MCP servers, but `getProjectDir()`
+ * resolves the project the same way the content store is keyed, which is enough.
+ * Consumed (deleted) after indexing to prevent double-indexing.
+ * Called on every getStore() — one stat when there is nothing pending.
+ *
+ * It used to readdir every `*-events.md` in the shared sessions dir. That
+ * swallowed other projects' pending events into this store (and the fixed
+ * `session-events` label dedup deleted all but the last file). See
+ * tests/core/session-events-consume.test.ts.
  */
-function maybeIndexSessionEvents(store: ContentStore): void {
+export function maybeIndexSessionEvents(store: ContentStore): void {
   try {
     const sessionsDir = getSessionDir();
     if (!existsSync(sessionsDir)) return;
-    const files = readdirSync(sessionsDir).filter(f => f.endsWith("-events.md"));
-    for (const file of files) {
-      const filePath = join(sessionsDir, file);
-      try {
-        store.index({ path: filePath, source: "session-events", attribution: currentAttribution() });
-        unlinkSync(filePath);
-      } catch { /* best-effort per file */ }
-    }
+    const filePath = resolveSessionPath({ projectDir: getProjectDir(), sessionsDir, ext: "-events.md" });
+    if (!existsSync(filePath)) return;
+    try {
+      store.index({ path: filePath, source: "session-events", attribution: currentAttribution() });
+      unlinkSync(filePath);
+    } catch { /* best-effort per file — a failed index keeps the file for retry */ }
   } catch { /* best-effort — session continuity never blocks tools */ }
 }
 
@@ -731,7 +737,9 @@ function getStore(): ContentStore {
       _store.cleanupStaleSources(14);
       // Also clean legacy shared dir from before platform isolation
       const legacyDir = join(homedir(), ".context-mode", "content");
-      if (existsSync(legacyDir)) cleanupStaleContentDBs(legacyDir, 0);
+      // Age-bounded: maxAgeDays=0 meant "delete everything", which would also
+      // delete a legacy DB still open by another (older) server process.
+      if (existsSync(legacyDir)) cleanupStaleContentDBs(legacyDir, 14);
     } catch { /* best-effort */ }
 
     // Also clean old PID-based DBs from migration
