@@ -173,12 +173,22 @@ function isPlanFilePath(filePath: string): boolean {
  * Other Edit/Write/Read tool calls → emit a file_edit / file_write / file_read
  * event (priority 1).
  */
+/**
+ * File-path argument across hosts. Claude/Cursor use `file_path`; OpenCode 2
+ * sends `path` for read/write/edit (verified against the tool blocks stored in
+ * opencode.db), so without this fallback every edit on that host was captured
+ * with an empty path — the file itself never reached the resume snapshot.
+ */
+function filePathArg(tool_input: Record<string, unknown>): string {
+  return String(tool_input["file_path"] ?? tool_input["path"] ?? "");
+}
+
 function extractFileAndRule(input: HookInput): SessionEvent[] {
   const { tool_name, tool_input, tool_response } = input;
   const events: SessionEvent[] = [];
 
   if (tool_name === "Read") {
-    const filePath = String(tool_input["file_path"] ?? "");
+    const filePath = filePathArg(tool_input);
 
     // Rule detection — covers every supported platform's instruction
     // file convention plus per-user memory directories. Hardcoding here
@@ -229,7 +239,7 @@ function extractFileAndRule(input: HookInput): SessionEvent[] {
   }
 
   if (tool_name === "Edit") {
-    const filePath = String(tool_input["file_path"] ?? "");
+    const filePath = filePathArg(tool_input);
     events.push({
       type: "file_edit",
       category: "file",
@@ -251,7 +261,7 @@ function extractFileAndRule(input: HookInput): SessionEvent[] {
   }
 
   if (tool_name === "Write") {
-    const filePath = String(tool_input["file_path"] ?? "");
+    const filePath = filePathArg(tool_input);
     events.push({
       type: "file_write",
       category: "file",
@@ -773,7 +783,7 @@ function extractPlan(input: HookInput): SessionEvent[] {
 
   // Detect plan file writes (Write/Edit to ~/.claude/plans/)
   if (input.tool_name === "Write" || input.tool_name === "Edit") {
-    const filePath = String(input.tool_input["file_path"] ?? "");
+    const filePath = filePathArg(input.tool_input);
     if (isPlanFilePath(filePath)) {
       return [{
         type: "plan_file_write",
@@ -2678,6 +2688,15 @@ const TOOL_NAME_NORMALIZE: Record<string, string> = {
   view: "Read",
   grep: "Grep",
   fetch: "WebFetch",
+  // OpenCode 2's own names, read out of opencode.db rather than guessed. Without
+  // these the capture side kept raw host names and matched none of the extract
+  // branches, so read/edit/write/file-rule capture was silent on this fork's
+  // primary host (549 edits in one db, zero file_edit events).
+  read: "Read",
+  write: "Write",
+  webfetch: "WebFetch",
+  websearch: "WebSearch",
+  subagent: "Agent",
   // Codex CLI
   shell: "Bash",
   shell_command: "Bash",

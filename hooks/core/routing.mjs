@@ -542,6 +542,10 @@ const TOOL_ALIASES = {
   // opencode.db); without this alias the WebFetch redirect never fires there.
   "webfetch": "WebFetch",
   "agent": "Agent",
+  // OpenCode 2 sends `subagent`, and it is deliberately NOT aliased here: this
+  // branch appends the routing block to the subagent prompt, while V2's `context`
+  // hook already injects it into the subagent's own session — an alias would mean
+  // two copies. Capture-side normalization does exist (extract.ts TOOL_NAME_NORMALIZE).
   // Codex CLI
   "shell": "Bash",
   "shell_command": "Bash",
@@ -552,7 +556,8 @@ const TOOL_ALIASES = {
   // OpenClaw native tools
   "exec": "Bash",
   "read": "Read",
-  "grep": "Grep",
+  // ("grep" already aliases to Grep in the OpenCode section above — this key had
+  // been appended a second time to the same object literal, where later wins.)
   "search": "Grep",
   // Cursor
   "mcp_web_fetch": "WebFetch",
