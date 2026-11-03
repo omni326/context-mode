@@ -38,7 +38,7 @@
  */
 import { Plugin } from "@opencode/plugin";
 import { createContextModePlugin } from "./plugin.js";
-import { pruneToolResults } from "./history-pruner.js";
+import { pruneToolResults, capsForPlatform } from "./history-pruner.js";
 
 type ContentPart = { type: string; text?: string };
 
@@ -191,10 +191,14 @@ export default Plugin.define({
     // per-session file if restart-driven cache misses ever show up in cost.
     if (process.env.CONTEXT_MODE_PRUNE_STALE === "1") {
       let decided = new Set<string>();
+      // Host naming drives both gates: which results have something behind them
+      // (a prefixed `context-mode_ctx_search` result is store-backed too) and the
+      // call shape the placeholder points at, which must be invokable here.
+      const caps = capsForPlatform(h.toolNamer);
       const reg = await ctx.session.hook("context", async (event) => {
         const msgs = event.messages as unknown[] | undefined;
         if (!Array.isArray(msgs)) return;
-        const out = pruneToolResults(msgs, { decided });
+        const out = pruneToolResults(msgs, { decided, caps });
         if (out.pruned.length === 0) return;
         decided = out.decided;
         // V2 only adopts a wholesale reassignment (see file header, note 1).

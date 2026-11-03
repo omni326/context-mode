@@ -19,7 +19,13 @@
  */
 
 import { describe, test, expect } from "vitest";
-import { pruneToolResults, textOf, looksFailed, isRecoverable } from "../../src/adapters/opencode/history-pruner.js";
+import {
+  pruneToolResults,
+  textOf,
+  looksFailed,
+  isRecoverable,
+  capsForPlatform,
+} from "../../src/adapters/opencode/history-pruner.js";
 
 const BIG = "x".repeat(9000);
 
@@ -187,5 +193,75 @@ describe("pruneToolResults", () => {
     msgs.splice(1, 0, { role: "system", content: [{ type: "text", text: "catalog" }] });
     const out = pruneToolResults(msgs, { keepRecentPairs: 1, keepTokens: 0 });
     expect(out.messages[1].content[0].text).toBe("catalog");
+  });
+});
+
+/**
+ * Host capability table.
+ *
+ * A `ctx_*` result is not named `ctx_*` in every host: OpenCode shows
+ * `context-mode_<tool>`, Gemini/Copilot `mcp__context-mode__<tool>`, Claude Code
+ * `mcp__plugin_context-mode_context-mode__<tool>`, and the in-process plugin
+ * tools stay bare. Two failures follow from hardcoding one shape:
+ *   - recognising only bare names ⇒ prefixed results are never pruned, so the
+ *     feature silently does nothing on those hosts;
+ *   - a pointer that hardcodes one host's call shape tells the model to invoke
+ *     something that does not exist there — a pointer that cannot be followed is
+ *     the same lie as pointing at an unindexed result.
+ * The host already owns this mapping (hooks/core/tool-naming.mjs), so the pruner
+ * takes it as input instead of guessing from the name.
+ */
+describe("host capability table", () => {
+  const gemini = (bare: string) => `mcp__context-mode__${bare}`;
+  const opencode = (bare: string) => `context-mode_${bare}`;
+
+  test("recognises the host's prefixed MCP tool names", () => {
+    expect(isRecoverable("context-mode_ctx_search", opencode)).toBe(true);
+    expect(isRecoverable("mcp__context-mode__ctx_batch_execute", gemini)).toBe(true);
+    expect(isRecoverable("ctx_batch_execute", gemini)).toBe(true); // plugin tools stay bare
+    expect(isRecoverable("read", gemini)).toBe(true); // disk-backed either way
+    expect(isRecoverable("shell", gemini)).toBe(false);
+    // The bare-name match must be anchored, not a substring: a third-party tool
+    // that happens to contain `ctx_` has nothing behind it.
+    expect(isRecoverable("notctx_search", gemini)).toBe(false);
+    expect(isRecoverable("mcp__context-mode__webfetch", gemini)).toBe(false);
+  });
+
+  test("pointer names the recall tool the way this host calls it", () => {
+    const msgs = [
+      user("go"),
+      call("x1", "mcp__context-mode__ctx_execute", { language: "js" }),
+      result("x1", "mcp__context-mode__ctx_execute", BIG),
+      user("next"),
+    ];
+    const out = pruneToolResults(msgs, {
+      keepRecentPairs: 0,
+      keepTokens: 0,
+      minBatchBytes: 0,
+      caps: capsForPlatform(gemini),
+    });
+    const text = textOf(out.messages[2]);
+    expect(text).toContain("pruned");
+    expect(text).toContain("mcp__context-mode__ctx_search");
+    expect(text).not.toContain('tools["context-mode"]');
+  });
+
+  test("a host without the Code Mode shape still gets a callable pointer", () => {
+    // opencode-v2 names MCP tools as an `execute`-catalog call expression; that is
+    // what the model has to type there, and only there.
+    const v2 = (bare: string) => `tools["context-mode"]["${bare}"]`;
+    const msgs = [
+      user("go"),
+      call("y1", "ctx_index", { path: "/tmp/a.log" }),
+      result("y1", "ctx_index", BIG),
+      user("next"),
+    ];
+    const out = pruneToolResults(msgs, {
+      keepRecentPairs: 0,
+      keepTokens: 0,
+      minBatchBytes: 0,
+      caps: capsForPlatform(v2),
+    });
+    expect(textOf(out.messages[2])).toContain('tools["context-mode"]["ctx_search"]');
   });
 });

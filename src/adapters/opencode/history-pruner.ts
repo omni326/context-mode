@@ -37,6 +37,8 @@ export interface PruneOpts {
   keepTokens?: number;
   /** Sticky record of already-pruned call ids; they stay pruned regardless of the batch floor. */
   decided?: Set<string>;
+  /** Host capabilities (recoverability + how to name the recall call). Default: bare tool names. */
+  caps?: PruneCaps;
 }
 
 export interface PrunedEntry {
@@ -98,10 +100,56 @@ export function looksFailed(text: string): boolean {
  *   - `ctx_*` tools    -> their output is in the store by construction
  *   - anything else    -> not prunable until something captures it (the Bash
  *     reroute makes those calls come back as `ctx_batch_execute`, which is)
+ *
+ * `namer` is the host's MCP tool naming (hooks/core/tool-naming.mjs): the same
+ * tool appears as `ctx_search`, `context-mode_ctx_search` or
+ * `mcp__context-mode__ctx_search` depending on host, and matching only the bare
+ * form means those results are never pruned. The ctx match is anchored so a
+ * third-party tool that merely contains `ctx_` does not qualify — it has nothing
+ * behind it either.
  */
-export function isRecoverable(name: string): boolean {
-  return /^ctx_/i.test(name) || /read/i.test(name);
+export type ToolNamer = (bareTool: string) => string;
+
+const BARE_CTX = /^ctx_[a-z0-9_]+$/i;
+
+export function isRecoverable(name: string, namer?: ToolNamer): boolean {
+  if (BARE_CTX.test(name) || /read/i.test(name)) return true;
+  if (!namer) return false;
+  // Derive this host's prefix/suffix from the namer rather than listing hosts:
+  // a renamed MCP server entry stays correct, and unknown hosts simply match
+  // the bare form.
+  const probe = namer("ctx_probe");
+  const at = probe.indexOf("ctx_probe");
+  if (at < 0) return false;
+  const prefix = probe.slice(0, at);
+  const suffix = probe.slice(at + "ctx_probe".length);
+  return (
+    name.startsWith(prefix) &&
+    name.endsWith(suffix) &&
+    BARE_CTX.test(name.slice(prefix.length, name.length - suffix.length))
+  );
 }
+
+/** What the pruner is allowed to assume about one host. */
+export interface PruneCaps {
+  /** Does this tool's output have something behind it? */
+  isRecoverable: (name: string) => boolean;
+  /** The exact recall call the model can invoke on this host. */
+  recallCall: string;
+}
+
+/**
+ * Capability table from the host's tool namer. The pointer has to name a call the
+ * model can actually make, so recognition and the recall shape come from the same
+ * source — a pointer to `tools["context-mode"]["ctx_search"]` is uncallable on a
+ * host where the tool is `mcp__context-mode__ctx_search`.
+ */
+export function capsForPlatform(namer: ToolNamer): PruneCaps {
+  return { isRecoverable: (name) => isRecoverable(name, namer), recallCall: namer("ctx_search") };
+}
+
+/** Callers with no host namer (tests, other adapters) get bare tool names. */
+const DEFAULT_CAPS = capsForPlatform((bare) => bare);
 
 /** The tool-call input paired with a result id — the cheapest thing to point at. */
 function pairedInput(messages: any[], id: string): unknown {
@@ -113,7 +161,7 @@ function pairedInput(messages: any[], id: string): unknown {
   return undefined;
 }
 
-function placeholderFor(name: string, bytes: number, input: unknown): string {
+function placeholderFor(name: string, bytes: number, input: unknown, caps: PruneCaps): string {
   const kb = Math.max(1, Math.round(bytes / 1024));
   const args = input === undefined ? "" : JSON.stringify(input).slice(0, 200);
   if (/read/i.test(name) && args) {
@@ -121,7 +169,7 @@ function placeholderFor(name: string, bytes: number, input: unknown): string {
   }
   return (
     `${PLACEHOLDER_MARK}${name} result pruned (${kb}KB, earlier turn). Input: ${args}. ` +
-    `Recall it with tools["context-mode"]["ctx_search"](queries: [...]) if it was indexed.`
+    `Recall it with ${caps.recallCall}(queries: [...]) if it was indexed.`
   );
 }
 
@@ -131,6 +179,7 @@ export function pruneToolResults(messages: any[], opts: PruneOpts = {}): PruneRe
   const minBatchBytes = opts.minBatchBytes ?? 20_000;
   const keepBytes = (opts.keepTokens ?? 15_000) * BYTES_PER_TOKEN;
   const decided = opts.decided;
+  const caps = opts.caps ?? DEFAULT_CAPS;
 
   // Walk from the tail: rank counts tool results seen so far, bytesFromEnd is
   // the distance to the tail (what the KV-cache still has warm).
@@ -148,7 +197,7 @@ export function pruneToolResults(messages: any[], opts: PruneOpts = {}): PruneRe
       const id = String(p?.id ?? `${mi}:${pi}`);
       // No backing store, no pruning — the pointer would promise a recall that
       // cannot happen. rank still counts it: "recent" is recent regardless.
-      if (isRecoverable(name)) {
+      if (caps.isRecoverable(name)) {
         const text = textOf({ content: [p] });
         const bytes = byteLen(text);
         const sticky = decided?.has(id) ?? false;
@@ -194,7 +243,7 @@ export function pruneToolResults(messages: any[], opts: PruneOpts = {}): PruneRe
       if (!hit) return p;
       savedBytes += hit.bytes;
       pruned.push({ id: hit.id, bytes: hit.bytes });
-      const text = placeholderFor(hit.name, hit.bytes, pairedInput(messages, hit.id));
+      const text = placeholderFor(hit.name, hit.bytes, pairedInput(messages, hit.id), caps);
       savedBytes -= byteLen(text);
       return { ...p, result: { ...p.result, value: [{ type: "text", text }] } };
     });

@@ -489,6 +489,9 @@ export async function createContextModePlugin(ctx: PluginContext) {
 
   return {
     tool: nativeTools,
+    // Host-specific tool naming (hooks/core/tool-naming.mjs). Exposed so V2-only
+    // hooks can name a call the model can actually invoke — see history-pruner.
+    toolNamer,
 
     // ── PreToolUse: Routing enforcement ─────────────────
 

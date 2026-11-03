@@ -571,6 +571,11 @@ verified against a running OpenCode 2):
    a `read` result points at its own input path, anything else points at `ctx_search`.
    Only results that can come back are touched: `read`-like tools (the file is still
    on disk) and `ctx_*` tools (their output is in the knowledge base by construction).
+   Which names count as `ctx_*`, and the call the pointer prints, both come from the
+   host's MCP tool naming (`hooks/core/tool-naming.mjs`) — the same tool appears as
+   `ctx_search`, `context-mode_ctx_search` or `mcp__context-mode__ctx_search`
+   depending on host, and a pointer to a shape that host cannot invoke is the same
+   lie as pointing at unindexed output.
    A native `shell` result is never pruned — nothing indexes native stdout into the
    store, so dropping it would be data loss wearing a pointer.
    Pruning is virtual — it changes only what the model is sent, never what is
