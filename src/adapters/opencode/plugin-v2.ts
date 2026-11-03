@@ -37,6 +37,7 @@
  *     CONTEXT_MODE_PLUGIN_TOOLS=1 to register them in-process instead.
  */
 import { Plugin } from "@opencode/plugin";
+import { appendFileSync } from "node:fs";
 import { createContextModePlugin } from "./plugin.js";
 import { pruneToolResults, capsForPlatform } from "./history-pruner.js";
 
@@ -207,6 +208,17 @@ export default Plugin.define({
         const out = pruneToolResults(msgs, { decided, caps });
         if (out.pruned.length === 0) return;
         decided = out.decided;
+        // shortcut: stats path comes from env, no default — measurement harness
+        // opts in; remove this block once ctx_stats grows a prune counter.
+        if (process.env.CONTEXT_MODE_PRUNE_STATS) {
+          try {
+            appendFileSync(
+              process.env.CONTEXT_MODE_PRUNE_STATS,
+              JSON.stringify({ ts: Date.now(), sessionID: (event as any).sessionID ?? null,
+                pruned: out.pruned.length, savedBytes: out.savedBytes }) + "\n",
+            );
+          } catch { /* measurement must never break the request */ }
+        }
         // V2 only adopts a wholesale reassignment (see file header, note 1).
         event.messages = out.messages as never;
       });
