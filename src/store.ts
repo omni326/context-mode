@@ -16,6 +16,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { walkDirectoryDetailed, type WalkOptions } from "./store-directory.js";
+import { maskSecrets } from "./security.js";
 
 // ─────────────────────────────────────────────────────────
 // Types
@@ -595,7 +596,7 @@ export class ContentStore {
       FROM chunks
       JOIN sources ON sources.id = chunks.source_id
       WHERE chunks MATCH ?
-      ORDER BY rank
+      ORDER BY rank * CASE WHEN source_category = 'auto-capture' THEN 0.4 ELSE 1.0 END
       LIMIT ?
     `);
     this.#stmtSearchPorterFiltered = this.#db.prepare(`
@@ -611,7 +612,7 @@ export class ContentStore {
       FROM chunks
       JOIN sources ON sources.id = chunks.source_id
       WHERE chunks MATCH ? AND sources.label LIKE ? ESCAPE '\\'
-      ORDER BY rank
+      ORDER BY rank * CASE WHEN source_category = 'auto-capture' THEN 0.4 ELSE 1.0 END
       LIMIT ?
     `);
     this.#stmtSearchPorterExact = this.#db.prepare(`
@@ -627,7 +628,7 @@ export class ContentStore {
       FROM chunks
       JOIN sources ON sources.id = chunks.source_id
       WHERE chunks MATCH ? AND sources.label = ?
-      ORDER BY rank
+      ORDER BY rank * CASE WHEN source_category = 'auto-capture' THEN 0.4 ELSE 1.0 END
       LIMIT ?
     `);
     this.#stmtSearchTrigram = this.#db.prepare(`
@@ -643,7 +644,7 @@ export class ContentStore {
       FROM chunks_trigram
       JOIN sources ON sources.id = chunks_trigram.source_id
       WHERE chunks_trigram MATCH ?
-      ORDER BY rank
+      ORDER BY rank * CASE WHEN source_category = 'auto-capture' THEN 0.4 ELSE 1.0 END
       LIMIT ?
     `);
     this.#stmtSearchTrigramFiltered = this.#db.prepare(`
@@ -659,7 +660,7 @@ export class ContentStore {
       FROM chunks_trigram
       JOIN sources ON sources.id = chunks_trigram.source_id
       WHERE chunks_trigram MATCH ? AND sources.label LIKE ? ESCAPE '\\'
-      ORDER BY rank
+      ORDER BY rank * CASE WHEN source_category = 'auto-capture' THEN 0.4 ELSE 1.0 END
       LIMIT ?
     `);
     this.#stmtSearchTrigramExact = this.#db.prepare(`
@@ -675,7 +676,7 @@ export class ContentStore {
       FROM chunks_trigram
       JOIN sources ON sources.id = chunks_trigram.source_id
       WHERE chunks_trigram MATCH ? AND sources.label = ?
-      ORDER BY rank
+      ORDER BY rank * CASE WHEN source_category = 'auto-capture' THEN 0.4 ELSE 1.0 END
       LIMIT ?
     `);
 
@@ -693,7 +694,7 @@ export class ContentStore {
       FROM chunks
       JOIN sources ON sources.id = chunks.source_id
       WHERE chunks MATCH ? AND chunks.content_type = ?
-      ORDER BY rank
+      ORDER BY rank * CASE WHEN source_category = 'auto-capture' THEN 0.4 ELSE 1.0 END
       LIMIT ?
     `);
     this.#stmtSearchPorterFilteredContentType = this.#db.prepare(`
@@ -709,7 +710,7 @@ export class ContentStore {
       FROM chunks
       JOIN sources ON sources.id = chunks.source_id
       WHERE chunks MATCH ? AND sources.label LIKE ? ESCAPE '\\' AND chunks.content_type = ?
-      ORDER BY rank
+      ORDER BY rank * CASE WHEN source_category = 'auto-capture' THEN 0.4 ELSE 1.0 END
       LIMIT ?
     `);
     this.#stmtSearchPorterExactContentType = this.#db.prepare(`
@@ -725,7 +726,7 @@ export class ContentStore {
       FROM chunks
       JOIN sources ON sources.id = chunks.source_id
       WHERE chunks MATCH ? AND sources.label = ? AND chunks.content_type = ?
-      ORDER BY rank
+      ORDER BY rank * CASE WHEN source_category = 'auto-capture' THEN 0.4 ELSE 1.0 END
       LIMIT ?
     `);
     this.#stmtSearchTrigramContentType = this.#db.prepare(`
@@ -741,7 +742,7 @@ export class ContentStore {
       FROM chunks_trigram
       JOIN sources ON sources.id = chunks_trigram.source_id
       WHERE chunks_trigram MATCH ? AND chunks_trigram.content_type = ?
-      ORDER BY rank
+      ORDER BY rank * CASE WHEN source_category = 'auto-capture' THEN 0.4 ELSE 1.0 END
       LIMIT ?
     `);
     this.#stmtSearchTrigramFilteredContentType = this.#db.prepare(`
@@ -757,7 +758,7 @@ export class ContentStore {
       FROM chunks_trigram
       JOIN sources ON sources.id = chunks_trigram.source_id
       WHERE chunks_trigram MATCH ? AND sources.label LIKE ? ESCAPE '\\' AND chunks_trigram.content_type = ?
-      ORDER BY rank
+      ORDER BY rank * CASE WHEN source_category = 'auto-capture' THEN 0.4 ELSE 1.0 END
       LIMIT ?
     `);
     this.#stmtSearchTrigramExactContentType = this.#db.prepare(`
@@ -773,7 +774,7 @@ export class ContentStore {
       FROM chunks_trigram
       JOIN sources ON sources.id = chunks_trigram.source_id
       WHERE chunks_trigram MATCH ? AND sources.label = ? AND chunks_trigram.content_type = ?
-      ORDER BY rank
+      ORDER BY rank * CASE WHEN source_category = 'auto-capture' THEN 0.4 ELSE 1.0 END
       LIMIT ?
     `);
 
@@ -1037,10 +1038,22 @@ export class ContentStore {
     contentHash?: string,
     attribution?: { sessionId?: string; eventId?: string },
   ): IndexResult {
+    // Single write funnel for index(), indexPlainText(), indexJSON() and
+    // indexDirectory(): anything stored here can be replayed to the model later
+    // through ctx_search, so credentials are stripped once, at the chokepoint.
+    // Callers keep the raw text for their staleness hashes.
+    chunks = chunks.map((c) => ({ ...c, content: maskSecrets(c.content) }));
+    text = maskSecrets(text);
+
     const codeChunks = chunks.filter((c) => c.hasCode).length;
     // FK columns on chunks. Empty-string fallback preserves the FTS5-friendly
     // "not-null but unattributed" sentinel used by legacy rows.
     const sessionIdCol = attribution?.sessionId ?? "";
+    // Auto-captured session events share the searchable index with deliberate ctx_*
+    // output; tag them so ranking can put deliberate work first (plan.md phase 1 item 3).
+    // Derived from the label: maybeIndexSessionEvents() is the only auto-capture funnel,
+    // so no new index() API is needed. The source_category column already existed, always null.
+    const category = label === "session-events" ? "auto-capture" : null;
     const eventIdCol = attribution?.eventId ?? "";
 
     // Atomic dedup + insert: delete previous source with same label,
@@ -1062,8 +1075,8 @@ export class ContentStore {
       const now = new Date().toISOString();
       for (const chunk of chunks) {
         const ct = chunk.hasCode ? "code" : "prose";
-        this.#stmtInsertChunk.run(chunk.title, chunk.content, sourceId, ct, null, sessionIdCol, eventIdCol, now);
-        this.#stmtInsertChunkTrigram.run(chunk.title, chunk.content, sourceId, ct, null, sessionIdCol, eventIdCol, now);
+        this.#stmtInsertChunk.run(chunk.title, chunk.content, sourceId, ct, category, sessionIdCol, eventIdCol, now);
+        this.#stmtInsertChunkTrigram.run(chunk.title, chunk.content, sourceId, ct, category, sessionIdCol, eventIdCol, now);
       }
 
       return sourceId;

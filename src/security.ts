@@ -887,3 +887,38 @@ export function extractShellCommands(
 
   return commands;
 }
+
+// ── Secret redaction (store boundary) ─────────────────────────────────────
+//
+// Anything written to the content store can be replayed into the model later
+// through ctx_search, so credentials have to die at the store boundary — one
+// chokepoint — rather than at every capture call site. Regex-level only; this
+// is a leak dam, not a completeness guarantee.
+// shortcut: regex set, tuned for what shows up in build/test/API logs; upgrade
+// to an entropy detector if redaction misses start showing up in recalls.
+const SECRET_PATTERNS: Array<{ name: string; re: RegExp }> = [
+  { name: "private-key", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
+  { name: "aws-key", re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g },
+  { name: "github-token", re: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/g },
+  { name: "stripe-key", re: /\b[spk]k_(?:live|test)_[A-Za-z0-9]{16,}\b/g },
+  { name: "slack-token", re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
+  { name: "google-key", re: /\bAIza[0-9A-Za-z_-]{35}\b/g },
+  { name: "llm-key", re: /\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}\b/g },
+  { name: "jwt", re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g },
+];
+
+// Generic `key: value` / `key=value`. Only the value is dropped so the line
+// stays readable and the agent can tell WHICH credential is missing. Value
+// charset excludes `[`, so already-redacted markers never re-match.
+const KEY_VALUE_RE =
+  /\b(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|secret[_-]?key|secret|password|passwd)\b["']?\s*[:=]\s*["']?[A-Za-z0-9_+/=.~%-]{12,}["']?/gi;
+
+/** Replace credentials with explicit `[REDACTED:<name>]` markers — never silent. */
+export function maskSecrets(text: string): string {
+  let out = text;
+  for (const { name, re } of SECRET_PATTERNS) out = out.replace(re, `[REDACTED:${name}]`);
+  return out.replace(KEY_VALUE_RE, (match) => {
+    const sep = Math.max(match.indexOf(":"), match.indexOf("="));
+    return `${match.slice(0, sep)}=[REDACTED]`;
+  });
+}
